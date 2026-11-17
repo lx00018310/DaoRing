@@ -1,0 +1,60 @@
+[
+  {
+    "id": "relic_lotus",
+    "name": "混沌青莲",
+    "description": "开局初始真气额外增加30点，且能量束初始寿命最大步数 TTL 提升2点",
+    "modifiers": {
+      "ttlBonus": 2,
+      "initialQiPerTurnBonus": 30
+    }
+  },
+  {
+    "id": "relic_elixir",
+    "name": "九转金丹",
+    "description": "领悟金丹大道，所有释放类道韵的基础产气释放系数提升25%",
+    "modifiers": {
+      "releaseFactorBonus": 0.25
+    }
+  },
+  {
+    "id": "relic_calculation",
+    "name": "天衍神算",
+    "description": "洞察天机，能量束在阵盘顺时针巡航移动时有20%概率不消耗 TTL 步数",
+    "modifiers": {
+      "freeCruiseChance": 0.20
+    }
+  },
+  {
+    "id": "relic_five_elements",
+    "name": "五行转轮",
+    "description": "五行周流生生不息，能量束每次完成自动升环，其基础气值 baseQi 额外永久增加10点",
+    "modifiers": {
+      "ascendBaseQiBonus": 10
+    }
+  },
+  {
+    "id": "relic_sword_intent",
+    "name": "诛仙剑意",
+    "description": "锋芒绝世，所有增幅类道韵暴击概率额外提升15%，且暴击倍率增加0.5",
+    "modifiers": {
+      "critChanceBonus": 0.15,
+      "critFactorBonus": 0.5
+    }
+  },
+  {
+    "id": "relic_void_walk",
+    "name": "太虚神行",
+    "description": "踏碎虚空，当能量踩中升维道韵强制跃迁时，必定在原槽位克隆衍生出1股同等属性能量束",
+    "modifiers": {
+      "jumpCloneChance": 1.0
+    }
+  },
+  {
+    "id": "relic_rebirth",
+    "name": "天道生机",
+    "description": "大道五十，天衍四九。当真气不足走火入魔时，逆天改命免死1次并注入30点续命真气（每局限1次）",
+    "modifiers": {
+      "hasRebirth": true
+    }
+  }
+]

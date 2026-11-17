@@ -1,0 +1,31 @@
+[
+  {
+    "id": "trib_thunder",
+    "name": "九霄神雷劫",
+    "description": "天雷滚滚，道心受淬。运转耗气递增指数由1.6提升至1.8；但破关后获得的道韵战利品翻倍！",
+    "targetSubStage": 3,
+    "modifiers": {
+      "costExponentOverride": 1.8,
+      "doubleLoot": true
+    }
+  },
+  {
+    "id": "trib_demon",
+    "name": "九幽心魔劫",
+    "description": "万魔噬心，命悬一线。能量束初始寿命最大步数 TTL 骤降4点；但所有释放道韵最终产气系数提升100%！",
+    "targetSubStage": 3,
+    "modifiers": {
+      "ttlPenalty": 4,
+      "releaseMultiplierBonus": 1.0
+    }
+  },
+  {
+    "id": "trib_cloud",
+    "name": "玄黄祥云劫",
+    "description": "天道赐福，化险为夷。本小关前2次周天运转完全免除真气消耗！",
+    "targetSubStage": 3,
+    "modifiers": {
+      "freeTurnsCount": 2
+    }
+  }
+]

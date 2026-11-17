@@ -1,0 +1,376 @@
+{
+  "dao_chain": {
+    "configId": "dao_chain",
+    "name": "分光道韵",
+    "category": "CONDUCT",
+    "effect": "CHAIN_SPLIT",
+    "levels": [
+      {
+        "level": 1,
+        "description": "能量经过必定分裂1股，10%概率额外再分裂1股",
+        "params": {
+          "guaranteedSplits": 1,
+          "extraSplitChance": 0.1
+        }
+      },
+      {
+        "level": 2,
+        "description": "能量经过必定分裂1股，20%概率额外再分裂1股",
+        "params": {
+          "guaranteedSplits": 1,
+          "extraSplitChance": 0.2
+        }
+      },
+      {
+        "level": 3,
+        "description": "能量经过必定分裂1股，30%概率额外再分裂1股",
+        "params": {
+          "guaranteedSplits": 1,
+          "extraSplitChance": 0.3
+        }
+      },
+      {
+        "level": 4,
+        "description": "能量经过必定分裂1股，40%概率额外再分裂1股",
+        "params": {
+          "guaranteedSplits": 1,
+          "extraSplitChance": 0.4
+        }
+      },
+      {
+        "level": 5,
+        "description": "能量经过必定分裂1股，50%概率额外再分裂1股",
+        "params": {
+          "guaranteedSplits": 1,
+          "extraSplitChance": 0.5
+        }
+      }
+    ]
+  },
+  "dao_jump": {
+    "configId": "dao_jump",
+    "name": "升维道韵",
+    "category": "CONDUCT",
+    "effect": "FORCE_JUMP",
+    "levels": [
+      {
+        "level": 1,
+        "description": "立即向外环跃迁1层，基础气值+15，本次移动不耗TTL",
+        "params": {
+          "baseQiBonus": 15
+        }
+      },
+      {
+        "level": 2,
+        "description": "立即向外环跃迁1层，基础气值+30，本次移动不耗TTL",
+        "params": {
+          "baseQiBonus": 30
+        }
+      },
+      {
+        "level": 3,
+        "description": "立即向外环跃迁1层，基础气值+45，本次移动不耗TTL",
+        "params": {
+          "baseQiBonus": 45
+        }
+      },
+      {
+        "level": 4,
+        "description": "立即向外环跃迁1层，基础气值+60，本次移动不耗TTL",
+        "params": {
+          "baseQiBonus": 60
+        }
+      },
+      {
+        "level": 5,
+        "description": "立即向外环跃迁1层，基础气值+75，本次移动不耗TTL",
+        "params": {
+          "baseQiBonus": 75
+        }
+      }
+    ]
+  },
+  "dao_reverse": {
+    "configId": "dao_reverse",
+    "name": "逆流道韵",
+    "category": "CONDUCT",
+    "effect": "REVERSE_FLOW",
+    "levels": [
+      {
+        "level": 1,
+        "description": "10%概率将外环能量倒灌回内环，恢复3点TTL（每股最多2次）",
+        "params": {
+          "reverseChance": 0.1,
+          "ttlRestore": 3,
+          "maxTriggers": 2
+        }
+      },
+      {
+        "level": 2,
+        "description": "20%概率将外环能量倒灌回内环，恢复3点TTL（每股最多2次）",
+        "params": {
+          "reverseChance": 0.2,
+          "ttlRestore": 3,
+          "maxTriggers": 2
+        }
+      },
+      {
+        "level": 3,
+        "description": "30%概率将外环能量倒灌回内环，恢复3点TTL（每股最多2次）",
+        "params": {
+          "reverseChance": 0.3,
+          "ttlRestore": 3,
+          "maxTriggers": 2
+        }
+      },
+      {
+        "level": 4,
+        "description": "45%概率将外环能量倒灌回内环，恢复3点TTL（每股最多2次）",
+        "params": {
+          "reverseChance": 0.45,
+          "ttlRestore": 3,
+          "maxTriggers": 2
+        }
+      },
+      {
+        "level": 5,
+        "description": "60%概率将外环能量倒灌回内环，恢复3点TTL（每股最多2次）",
+        "params": {
+          "reverseChance": 0.6,
+          "ttlRestore": 3,
+          "maxTriggers": 2
+        }
+      }
+    ]
+  },
+  "dao_gather": {
+    "configId": "dao_gather",
+    "name": "聚灵道韵",
+    "category": "AMPLIFY",
+    "effect": "GATHER",
+    "levels": [
+      {
+        "level": 1,
+        "description": "能量经过时基础气值+20",
+        "params": {
+          "baseQiAdd": 20
+        }
+      },
+      {
+        "level": 2,
+        "description": "能量经过时基础气值+40",
+        "params": {
+          "baseQiAdd": 40
+        }
+      },
+      {
+        "level": 3,
+        "description": "能量经过时基础气值+60",
+        "params": {
+          "baseQiAdd": 60
+        }
+      },
+      {
+        "level": 4,
+        "description": "能量经过时基础气值+80",
+        "params": {
+          "baseQiAdd": 80
+        }
+      },
+      {
+        "level": 5,
+        "description": "能量经过时基础气值+100",
+        "params": {
+          "baseQiAdd": 100
+        }
+      }
+    ]
+  },
+  "dao_crit": {
+    "configId": "dao_crit",
+    "name": "锋芒道韵",
+    "category": "AMPLIFY",
+    "effect": "CRIT",
+    "levels": [
+      {
+        "level": 1,
+        "description": "倍率+0.5，10%概率总倍率再×1.5",
+        "params": {
+          "multiplierAdd": 0.5,
+          "critChance": 0.1,
+          "critFactor": 1.5
+        }
+      },
+      {
+        "level": 2,
+        "description": "倍率+1.0，20%概率总倍率再×1.5",
+        "params": {
+          "multiplierAdd": 1.0,
+          "critChance": 0.2,
+          "critFactor": 1.5
+        }
+      },
+      {
+        "level": 3,
+        "description": "倍率+1.5，30%概率总倍率再×1.5",
+        "params": {
+          "multiplierAdd": 1.5,
+          "critChance": 0.3,
+          "critFactor": 1.5
+        }
+      },
+      {
+        "level": 4,
+        "description": "倍率+2.0，40%概率总倍率再×1.5",
+        "params": {
+          "multiplierAdd": 2.0,
+          "critChance": 0.4,
+          "critFactor": 1.5
+        }
+      },
+      {
+        "level": 5,
+        "description": "倍率+2.5，50%概率总倍率再×1.5",
+        "params": {
+          "multiplierAdd": 2.5,
+          "critChance": 0.5,
+          "critFactor": 1.5
+        }
+      }
+    ]
+  },
+  "dao_resonance": {
+    "configId": "dao_resonance",
+    "name": "周天道韵",
+    "category": "AMPLIFY",
+    "effect": "RESONANCE",
+    "levels": [
+      {
+        "level": 1,
+        "description": "每经历过1次升环，倍率+0.4",
+        "params": {
+          "multiplierPerJump": 0.4
+        }
+      },
+      {
+        "level": 2,
+        "description": "每经历过1次升环，倍率+0.8",
+        "params": {
+          "multiplierPerJump": 0.8
+        }
+      },
+      {
+        "level": 3,
+        "description": "每经历过1次升环，倍率+1.2",
+        "params": {
+          "multiplierPerJump": 1.2
+        }
+      },
+      {
+        "level": 4,
+        "description": "每经历过1次升环，倍率+1.6",
+        "params": {
+          "multiplierPerJump": 1.6
+        }
+      },
+      {
+        "level": 5,
+        "description": "每经历过1次升环，倍率+2.0",
+        "params": {
+          "multiplierPerJump": 2.0
+        }
+      }
+    ]
+  },
+  "dao_burst": {
+    "configId": "dao_burst",
+    "name": "灵爆术",
+    "category": "RELEASE",
+    "effect": "RELEASE_BURST",
+    "levels": [
+      {
+        "level": 1,
+        "description": "终结能量并产气，释放系数1.25",
+        "params": {
+          "releaseFactor": 1.25
+        }
+      },
+      {
+        "level": 2,
+        "description": "终结能量并产气，释放系数1.50",
+        "params": {
+          "releaseFactor": 1.5
+        }
+      },
+      {
+        "level": 3,
+        "description": "终结能量并产气，释放系数1.75",
+        "params": {
+          "releaseFactor": 1.75
+        }
+      },
+      {
+        "level": 4,
+        "description": "终结能量并产气，释放系数2.00",
+        "params": {
+          "releaseFactor": 2.0
+        }
+      },
+      {
+        "level": 5,
+        "description": "终结能量并产气，释放系数2.25",
+        "params": {
+          "releaseFactor": 2.25
+        }
+      }
+    ]
+  },
+  "dao_sword": {
+    "configId": "dao_sword",
+    "name": "万剑诀",
+    "category": "RELEASE",
+    "effect": "RELEASE_SWORD",
+    "levels": [
+      {
+        "level": 1,
+        "description": "终结能量并产气，释放系数0.8，每剩余1点TTL额外+15%",
+        "params": {
+          "releaseFactor": 0.8,
+          "ttlBonusFactor": 0.15
+        }
+      },
+      {
+        "level": 2,
+        "description": "终结能量并产气，释放系数1.6，每剩余1点TTL额外+15%",
+        "params": {
+          "releaseFactor": 1.6,
+          "ttlBonusFactor": 0.15
+        }
+      },
+      {
+        "level": 3,
+        "description": "终结能量并产气，释放系数2.4，每剩余1点TTL额外+15%",
+        "params": {
+          "releaseFactor": 2.4,
+          "ttlBonusFactor": 0.15
+        }
+      },
+      {
+        "level": 4,
+        "description": "终结能量并产气，释放系数3.2，每剩余1点TTL额外+15%",
+        "params": {
+          "releaseFactor": 3.2,
+          "ttlBonusFactor": 0.15
+        }
+      },
+      {
+        "level": 5,
+        "description": "终结能量并产气，释放系数4.0，每剩余1点TTL额外+15%",
+        "params": {
+          "releaseFactor": 4.0,
+          "ttlBonusFactor": 0.15
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "realmNames": ["炼气", "筑基", "金丹", "元婴", "化神"],
+  "ringSlots": [4, 6, 8, 10, 12],
+  "initialQi": 100,
+  "initialHandSize": 6,
+  "initialTtl": 12,
+  "initialBaseQi": 10,
+  "initialMultiplier": 1.0,
+  "maxPulses": 32,
+  "maxTicksPerTurn": 2000,
+  "qiCostExponent": 1.6,
+  "dropCountMin": 3,
+  "dropCountMax": 5,
+  "combineRequiredCount": 3
+}

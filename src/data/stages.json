@@ -1,0 +1,21 @@
+[
+  { "realm": 1, "subStage": 1, "name": "炼气·初期", "threshold": 30, "baseCost": 10 },
+  { "realm": 1, "subStage": 2, "name": "炼气·中期", "threshold": 60, "baseCost": 15 },
+  { "realm": 1, "subStage": 3, "name": "炼气·巅峰", "threshold": 120, "baseCost": 25 },
+
+  { "realm": 2, "subStage": 1, "name": "筑基·初期", "threshold": 300, "baseCost": 80 },
+  { "realm": 2, "subStage": 2, "name": "筑基·中期", "threshold": 600, "baseCost": 150 },
+  { "realm": 2, "subStage": 3, "name": "筑基·巅峰", "threshold": 1200, "baseCost": 300 },
+
+  { "realm": 3, "subStage": 1, "name": "金丹·初期", "threshold": 3000, "baseCost": 800 },
+  { "realm": 3, "subStage": 2, "name": "金丹·中期", "threshold": 6000, "baseCost": 1500 },
+  { "realm": 3, "subStage": 3, "name": "金丹·巅峰", "threshold": 15000, "baseCost": 3500 },
+
+  { "realm": 4, "subStage": 1, "name": "元婴·初期", "threshold": 40000, "baseCost": 10000 },
+  { "realm": 4, "subStage": 2, "name": "元婴·中期", "threshold": 100000, "baseCost": 25000 },
+  { "realm": 4, "subStage": 3, "name": "元婴·巅峰", "threshold": 250000, "baseCost": 60000 },
+
+  { "realm": 5, "subStage": 1, "name": "化神·初期", "threshold": 600000, "baseCost": 150000 },
+  { "realm": 5, "subStage": 2, "name": "化神·中期", "threshold": 1500000, "baseCost": 400000 },
+  { "realm": 5, "subStage": 3, "name": "化神·巅峰", "threshold": 5000000, "baseCost": 1000000 }
+]

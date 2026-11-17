@@ -1,0 +1,32 @@
+[
+  {
+    "id": "talent_qi_foundation",
+    "name": "真气底蕴",
+    "description": "开局初始真气池增加 25 点（每级）",
+    "maxLevel": 5,
+    "costPerLevel": [10, 25, 50, 100, 200],
+    "bonusPerLevel": {
+      "initialQi": 25
+    }
+  },
+  {
+    "id": "talent_hand_capacity",
+    "name": "袖里乾坤",
+    "description": "开局初始手牌增加 1 张（每级）",
+    "maxLevel": 2,
+    "costPerLevel": [30, 80],
+    "bonusPerLevel": {
+      "initialHand": 1
+    }
+  },
+  {
+    "id": "talent_free_fuel",
+    "name": "炉火纯青",
+    "description": "阵盘进行覆盖或移位操作时，有 20% 概率不消耗燃料手牌（每级）",
+    "maxLevel": 2,
+    "costPerLevel": [50, 120],
+    "bonusPerLevel": {
+      "freeFuelChance": 0.20
+    }
+  }
+]

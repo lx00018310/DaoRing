@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>周天破境录 · 核心引擎调试台</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="dashboard" id="dashboard"></header>
+      <main class="layout">
+        <section class="board-panel">
+          <h2>周天阵盘</h2>
+          <div class="board" id="board"></div>
+        </section>
+        <aside class="log-panel">
+          <h2>运转日志</h2>
+          <div class="log" id="log"></div>
+        </aside>
+      </main>
+      <footer class="hand-panel">
+        <div class="hand-header">
+          <h2>手牌池 <span id="hand-count"></span></h2>
+          <div class="actions">
+            <button id="btn-reset" class="btn btn-ghost">重开</button>
+            <button id="btn-run" class="btn btn-primary">运转周天</button>
+          </div>
+        </div>
+        <div class="hand" id="hand"></div>
+        <p class="hint" id="hint">点击阵盘空槽放置选中道韵 · 点击已占用槽位覆盖（额外消耗 1 张手牌作燃料）</p>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
