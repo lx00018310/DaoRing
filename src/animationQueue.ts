@@ -32,34 +32,50 @@ export interface VisualCallbacks {
 export class AnimationQueueDirector {
   private isRunning: boolean = false;
   private isSkipped: boolean = false;
-  private activeTimers: number[] = [];
-  private currentPromiseResolve: (() => void) | null = null;
+  private isCancelled: boolean = false;
+  private activeTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private activeWaitResolvers: Array<() => void> = [];
 
   public get running(): boolean {
     return this.isRunning;
   }
 
-  /** 安全延时 */
-  private wait(ms: number): Promise<void> {
-    if (this.isSkipped) return Promise.resolve();
+  public get skipped(): boolean {
+    return this.isSkipped;
+  }
+
+  public get cancelled(): boolean {
+    return this.isCancelled;
+  }
+
+  /** 安全可取消延时 */
+  public wait(ms: number): Promise<void> {
+    if (this.isSkipped || this.isCancelled) return Promise.resolve();
     return new Promise((resolve) => {
-      const timer = window.setTimeout(() => {
+      let timer: ReturnType<typeof setTimeout>;
+      const wake = () => {
+        const tIdx = this.activeTimers.indexOf(timer);
+        if (tIdx !== -1) this.activeTimers.splice(tIdx, 1);
+        const rIdx = this.activeWaitResolvers.indexOf(wake);
+        if (rIdx !== -1) this.activeWaitResolvers.splice(rIdx, 1);
         resolve();
-      }, ms);
+      };
+
+      timer = setTimeout(wake, ms);
       this.activeTimers.push(timer);
+      this.activeWaitResolvers.push(wake);
     });
   }
 
-  /** 清除所有正在等待的定时器 */
+  /** 清除所有正在等待的定时器并彻底作废当前局演出 */
   public cancelAll(): void {
+    this.isCancelled = true;
+    this.isRunning = false;
     this.activeTimers.forEach((t) => clearTimeout(t));
     this.activeTimers = [];
-    this.isRunning = false;
-    this.isSkipped = true;
-    if (this.currentPromiseResolve) {
-      this.currentPromiseResolve();
-      this.currentPromiseResolve = null;
-    }
+    const resolvers = [...this.activeWaitResolvers];
+    this.activeWaitResolvers = [];
+    resolvers.forEach((r) => r());
   }
 
   /** 玩家点击跳过动画 */
@@ -68,10 +84,9 @@ export class AnimationQueueDirector {
     this.isSkipped = true;
     this.activeTimers.forEach((t) => clearTimeout(t));
     this.activeTimers = [];
-    if (this.currentPromiseResolve) {
-      this.currentPromiseResolve();
-      this.currentPromiseResolve = null;
-    }
+    const resolvers = [...this.activeWaitResolvers];
+    this.activeWaitResolvers = [];
+    resolvers.forEach((r) => r());
   }
 
   /** 执行整轮回合演出 */
@@ -84,6 +99,7 @@ export class AnimationQueueDirector {
     this.cancelAll();
     this.isRunning = true;
     this.isSkipped = false;
+    this.isCancelled = false;
 
     const reducedMotion =
       typeof window !== 'undefined' &&
@@ -91,14 +107,14 @@ export class AnimationQueueDirector {
       window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     return new Promise<void>((resolve) => {
-      this.currentPromiseResolve = resolve;
-
       this.executeSequence(result, isFinaleReady, isMinorReady, reducedMotion, cb)
         .catch(() => {})
         .finally(() => {
           this.isRunning = false;
-          this.currentPromiseResolve = null;
-          cb.onComplete();
+          // 若被外部 cancelAll() 强制取消，绝不调用旧局的 onComplete
+          if (!this.isCancelled) {
+            cb.onComplete();
+          }
           resolve();
         });
     });

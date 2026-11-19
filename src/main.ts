@@ -104,6 +104,8 @@ const CATEGORY_MAP: Record<DaoCategory, { label: string; badgeClass: string }> =
   RELEASE: { label: '释放', badgeClass: 'badge-release' },
 };
 
+const SUBSTAGE_NAMES = ['', '初期', '中期', '巅峰'];
+
 // ------------------------------------------------------------
 // 渲染：顶部状态栏 (HUD)
 // ------------------------------------------------------------
@@ -217,23 +219,33 @@ function renderHand(): void {
 function updateHint(): void {
   if (actionState.mode === 'SELECT_FUEL_OVERWRITE') {
     hintBarEl.className = 'hint-bar active';
-    hintBarEl.textContent = '【覆盖】请点击手牌中 1 张作为改阵燃料销毁（或点其他重置）';
+    hintBarEl.innerHTML = '【覆盖模式】点击手牌中 1 张作为改阵燃料销毁（<span style="text-decoration:underline;cursor:pointer" id="hint-cancel">点击此处取消</span>）';
   } else if (actionState.mode === 'SELECT_FUEL_REMOVE') {
     hintBarEl.className = 'hint-bar active';
-    hintBarEl.textContent = '【拆除】请点击手牌中 1 张作为燃料清空该槽位';
+    hintBarEl.innerHTML = '【拆除模式】点击手牌中 1 张作为燃料清空该槽位（<span style="text-decoration:underline;cursor:pointer" id="hint-cancel">点击此处取消</span>）';
   } else if (actionState.mode === 'SELECT_MOVE_DEST') {
     hintBarEl.className = 'hint-bar active';
-    hintBarEl.textContent = '【移位】请点击阵盘上的任一【空槽】作为目标位置';
+    hintBarEl.innerHTML = '【移位模式】请点击阵盘上的任一【空槽】作为目标（<span style="text-decoration:underline;cursor:pointer" id="hint-cancel">点击此处取消</span>）';
   } else if (actionState.mode === 'SELECT_FUEL_MOVE') {
     hintBarEl.className = 'hint-bar active';
-    hintBarEl.textContent = '【移位】请点击手牌中 1 张作为燃料确认移位';
+    hintBarEl.innerHTML = '【移位模式】点击手牌中 1 张作为燃料确认移位（<span style="text-decoration:underline;cursor:pointer" id="hint-cancel">点击此处取消</span>）';
   } else if (selectedCardUid) {
     const c = state.hand.find((item) => item.uid === selectedCardUid);
     hintBarEl.className = 'hint-bar active';
-    hintBarEl.textContent = `已选【${c?.name ?? ''}】：点击阵盘空槽布置；点击已有槽位覆盖`;
+    const catLabel = c ? CATEGORY_MAP[c.category].label : '';
+    hintBarEl.textContent = `已选【${c?.name ?? ''}】(${catLabel})：${c?.description ?? ''} · 点击阵盘空槽布置`;
   } else {
     hintBarEl.className = 'hint-bar';
     hintBarEl.textContent = '点击手牌选中 · 放入阵眼部署 · 点击“运转周天”引发连锁';
+  }
+
+  const cancelBtn = document.getElementById('hint-cancel');
+  if (cancelBtn) {
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      resetActionState();
+      renderAll();
+    };
   }
 }
 
@@ -510,7 +522,7 @@ function runTurnAction(): void {
     playMinorBreakthrough: async () => {
       // 0.8s 轻量反馈：阵心丹田微亮
       dantianCore.classList.add('gold');
-      await new Promise((r) => setTimeout(r, 800));
+      await animationDirector.wait(800);
       dantianCore.classList.remove('gold');
     },
 
@@ -519,20 +531,20 @@ function runTurnAction(): void {
       if (isReduced) {
         dantianCore.classList.add('gold');
         meridianNetwork.querySelectorAll('.meridian-path').forEach((p) => p.classList.add('active'));
-        await new Promise((r) => setTimeout(r, 800));
+        await animationDirector.wait(800);
         return;
       }
 
       // 分镜 1 (0.0~0.7s): 周天归一，能量向阵心收束
       sound.playFinaleCharge();
       convergeLines.forEach((line) => line.classList.add('active'));
-      await new Promise((r) => setTimeout(r, 700));
+      await animationDirector.wait(700);
 
       // 分镜 2 (0.7~1.5s): 灵气入体，经脉依次点亮
       sound.playFinaleMeridian();
       dantianCore.classList.add('gold');
       meridianNetwork.querySelectorAll('.meridian-path').forEach((p) => p.classList.add('active'));
-      await new Promise((r) => setTimeout(r, 800));
+      await animationDirector.wait(800);
 
       // 分镜 3 (1.5~2.3s): 破茧冲关，光茧与裂纹
       sound.playFinaleBreak();
@@ -540,7 +552,7 @@ function runTurnAction(): void {
       cocoonCracks.querySelectorAll('.crack-line').forEach((c) => c.classList.add('active'));
       stageCircleEl.classList.add('screen-shake');
       setTimeout(() => stageCircleEl.classList.remove('screen-shake'), 300);
-      await new Promise((r) => setTimeout(r, 800));
+      await animationDirector.wait(800);
 
       // 分镜 4 (2.3~3.2s): 周天贯通，金色冲击波掠过四阵眼
       sound.playFinaleComplete();
@@ -549,12 +561,12 @@ function runTurnAction(): void {
       shockwave1.classList.add('active');
       shockwave2.classList.add('active');
       slotEls.forEach((el) => el.classList.add('amplify-pulse'));
-      await new Promise((r) => setTimeout(r, 900));
+      await animationDirector.wait(900);
 
       // 分镜 5 (3.2~4.5s): 炼气圆满成就定格
       slotEls.forEach((el) => el.classList.remove('amplify-pulse'));
       convergeLines.forEach((line) => line.classList.remove('active'));
-      await new Promise((r) => setTimeout(r, 500));
+      await animationDirector.wait(500);
     },
 
     onComplete: () => {
@@ -586,11 +598,12 @@ function runTurnAction(): void {
 
 function showStageClearModal(turnRes: TurnExecutionResult): void {
   modalLayer.style.display = 'flex';
+  const stageName = SUBSTAGE_NAMES[state.subStage] ?? `第 ${state.subStage} 阶段`;
   modalCard.innerHTML = `
     <div class="modal-title" style="color:var(--text-green)">突破大捷</div>
     <div class="modal-desc">
       真气爆发 <strong class="val-gold">${turnRes.simulation.turnQiGenerated}</strong> 达成突破！<br />
-      境界精进至【炼气期 · 第 ${state.subStage} 阶段】
+      境界精进至【炼气期 · ${stageName}】
     </div>
     <div class="modal-score-box">
       <div class="modal-score-label">缴获全新道韵卡</div>

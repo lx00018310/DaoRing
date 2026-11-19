@@ -1,11 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { animationDirector } from '../src/animationQueue';
 import {
   createDemoInitialGameState,
   executeDemoTurn,
   placeDao,
 } from '../src/game';
 
-describe('炼气篇 Demo P0/P1 核心闭环测试', () => {
+describe('炼气篇 Demo P0/P1/P2 核心闭环与系统测试', () => {
   it('炼气巅峰通关后应止步于炼气圆满（isVictory=true），绝不跳转筑基与解锁外环', () => {
     const state = createDemoInitialGameState();
     state.realm = 1;
@@ -68,5 +69,95 @@ describe('炼气篇 Demo P0/P1 核心闭环测试', () => {
       .filter((l) => l.action === 'RELEASE')
       .reduce((sum, l) => sum + (l.qiDelta ?? 0), 0);
     expect(totalReleased).toBe(res.simulation.turnQiGenerated);
+  });
+
+  it('当真气耗尽无法支付运转费用时，正确结算为走火入魔', () => {
+    const state = createDemoInitialGameState();
+    state.currentQi = 0; // 真气耗尽
+    state.nextQiCost = 10;
+
+    const res = executeDemoTurn(state);
+    expect(res.isGameOver).toBe(true);
+    expect(state.isGameOver).toBe(true);
+    expect(res.cleared).toBe(false);
+  });
+
+  it('动画调度器 cancelAll 应彻底阻断旧局 onComplete 回调触发（防串局）', async () => {
+    const onComplete = vi.fn();
+    const dummyResult = {
+      charged: 10,
+      simulation: {
+        turnQiGenerated: 50,
+        logs: [
+          { seq: 1, pulseId: 'P0', ringIdx: 0, slotIdx: 0, action: 'MOVE', detail: 'test' },
+        ],
+        totalSpawned: 1,
+        releasedCount: 1,
+        expiredCount: 0,
+      },
+      cleared: true,
+      lootAwarded: [],
+      newRealmUnlocked: false,
+      isVictory: false,
+      isGameOver: false,
+    };
+
+    const promise = animationDirector.playTurn(dummyResult, false, false, {
+      setSlotHighlight: vi.fn(),
+      highlightTrack: vi.fn(),
+      spawnFloatText: vi.fn(),
+      updateBurstScore: vi.fn(),
+      playMinorBreakthrough: vi.fn().mockResolvedValue(undefined),
+      playGrandBreakthrough: vi.fn().mockResolvedValue(undefined),
+      onComplete,
+    });
+
+    // 立即执行取消
+    animationDirector.cancelAll();
+    await promise;
+
+    // 验证取消后决不触发 onComplete
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(animationDirector.running).toBe(false);
+  });
+
+  it('动画调度器 skip 应毫秒级中断并完成结算', async () => {
+    const onComplete = vi.fn();
+    const dummyResult = {
+      charged: 10,
+      simulation: {
+        turnQiGenerated: 66,
+        logs: [
+          { seq: 1, pulseId: 'P0', ringIdx: 0, slotIdx: 0, action: 'MOVE', detail: 'test' },
+          { seq: 2, pulseId: 'P0', ringIdx: 0, slotIdx: 1, action: 'AMPLIFY', detail: 'test' },
+        ],
+        totalSpawned: 1,
+        releasedCount: 1,
+        expiredCount: 0,
+      },
+      cleared: false,
+      lootAwarded: [],
+      newRealmUnlocked: false,
+      isVictory: false,
+      isGameOver: false,
+    };
+
+    const updateBurstScore = vi.fn();
+    const promise = animationDirector.playTurn(dummyResult, false, false, {
+      setSlotHighlight: vi.fn(),
+      highlightTrack: vi.fn(),
+      spawnFloatText: vi.fn(),
+      updateBurstScore,
+      playMinorBreakthrough: vi.fn().mockResolvedValue(undefined),
+      playGrandBreakthrough: vi.fn().mockResolvedValue(undefined),
+      onComplete,
+    });
+
+    // 跳过
+    animationDirector.skip();
+    await promise;
+
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(updateBurstScore).toHaveBeenCalledWith(66, 66, true);
   });
 });
