@@ -2,35 +2,199 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>周天破境录 · 核心引擎调试台</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>周天破境录：炼气篇</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app">
-      <header class="dashboard" id="dashboard"></header>
-      <main class="layout">
-        <section class="board-panel">
-          <h2>周天阵盘</h2>
-          <div class="board" id="board"></div>
-        </section>
-        <aside class="log-panel">
-          <h2>运转日志</h2>
-          <div class="log" id="log"></div>
-        </aside>
-      </main>
-      <footer class="hand-panel">
-        <div class="hand-header">
-          <h2>手牌池 <span id="hand-count"></span></h2>
-          <div class="actions">
-            <button id="btn-reset" class="btn btn-ghost">重开</button>
-            <button id="btn-run" class="btn btn-primary">运转周天</button>
+    <div id="app" class="game-container">
+      <!-- 顶部：境界与破障指标栏 -->
+      <header class="hud-header">
+        <div class="hud-brand">
+          <h1 class="game-title">周天破境录 <span class="sub-title">炼气篇</span></h1>
+          <div class="stage-stepper">
+            <span class="stage-step" id="step-1">炼气初期</span>
+            <span class="step-arrow">➔</span>
+            <span class="stage-step" id="step-2">炼气中期</span>
+            <span class="step-arrow">➔</span>
+            <span class="stage-step" id="step-3">炼气巅峰</span>
           </div>
         </div>
-        <div class="hand" id="hand"></div>
-        <p class="hint" id="hint">点击阵盘空槽放置选中道韵 · 点击已占用槽位覆盖（额外消耗 1 张手牌作燃料）</p>
+
+        <div class="hud-stats">
+          <div class="stat-pill">
+            <span class="stat-name">真气池</span>
+            <span class="stat-val val-green" id="stat-qi">100</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-name">破障阈值</span>
+            <span class="stat-val val-gold" id="stat-target">30</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-name">运转消耗</span>
+            <span class="stat-val val-purple" id="stat-cost">10</span>
+          </div>
+        </div>
+
+        <div class="hud-tools">
+          <button id="btn-audio" class="tool-btn" title="声音开关">🔊</button>
+          <button id="btn-toggle-log" class="tool-btn" title="开发调试日志">📜</button>
+        </div>
+      </header>
+
+      <!-- 中部：法阵与打坐修士主舞台 -->
+      <main class="stage-main">
+        <div class="cave-mist"></div>
+        <div class="circle-stage" id="circle-stage">
+          <!-- SVG 矢量背景、连线轨道、修士剪影与破茧光效 -->
+          <svg class="stage-svg" viewBox="0 0 500 500" id="stage-svg">
+            <defs>
+              <!-- 阵盘背景径向渐变 -->
+              <radialGradient id="grad-disk" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#0a1824" stop-opacity="0.8" />
+                <stop offset="70%" stop-color="#070f17" stop-opacity="0.95" />
+                <stop offset="100%" stop-color="#04080c" stop-opacity="1" />
+              </radialGradient>
+              <!-- 丹田金光滤镜 -->
+              <filter id="glow-gold" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+              <!-- 灵气青光滤镜 -->
+              <filter id="glow-cyan" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+
+            <!-- 阵盘古朴底盘与装饰符纹圈 -->
+            <circle cx="250" cy="250" r="236" class="svg-ring-outer" />
+            <circle cx="250" cy="250" r="170" class="svg-ring-track" />
+            <circle cx="250" cy="250" r="105" class="svg-ring-inner" />
+
+            <!-- 四槽之间的顺时针导引能量轨道 (0:上(250,80) -> 1:右(420,250) -> 2:下(250,420) -> 3:左(80,250)) -->
+            <path id="track-0-1" d="M 250 80 A 170 170 0 0 1 420 250" class="svg-orbit-path" />
+            <path id="track-1-2" d="M 420 250 A 170 170 0 0 1 250 420" class="svg-orbit-path" />
+            <path id="track-2-3" d="M 250 420 A 170 170 0 0 1 80 250" class="svg-orbit-path" />
+            <path id="track-3-0" d="M 80 250 A 170 170 0 0 1 250 80" class="svg-orbit-path" />
+
+            <!-- 终局演出：阵眼向阵心汇聚的 4 条余辉流光线 -->
+            <line x1="250" y1="80" x2="250" y2="250" class="converge-line" id="conv-0" />
+            <line x1="420" y1="250" x2="250" y2="250" class="converge-line" id="conv-1" />
+            <line x1="250" y1="420" x2="250" y2="250" class="converge-line" id="conv-2" />
+            <line x1="80" y1="250" x2="250" y2="250" class="converge-line" id="conv-3" />
+
+            <!-- 阵心视觉主体：打坐修士剪影群 (Center 250, 250) -->
+            <g id="cultivator-group" class="cultivator-group">
+              <!-- 修士打坐剪影 (无五官、盘坐、垂手结印) -->
+              <path class="cultivator-body" d="
+                M 250 190
+                C 243 190, 238 195, 238 202
+                C 238 210, 244 216, 250 216
+                C 256 216, 262 210, 262 202
+                C 262 195, 257 190, 250 190 Z
+                M 250 218
+                C 240 218, 226 226, 220 236
+                C 214 246, 212 260, 212 270
+                C 212 278, 218 285, 230 286
+                C 240 287, 246 280, 250 280
+                C 254 280, 260 287, 270 286
+                C 282 285, 288 278, 288 270
+                C 288 260, 286 246, 280 236
+                C 274 226, 260 218, 250 218 Z
+                M 205 285
+                C 210 280, 224 278, 236 284
+                C 244 288, 256 288, 264 284
+                C 276 278, 290 280, 295 285
+                C 298 288, 296 295, 284 296
+                C 268 297, 232 297, 216 296
+                C 204 295, 202 288, 205 285 Z
+              " />
+
+              <!-- 修士体内觉醒经脉 (督脉、冲脉、双臂手三阳/手三阴脉) -->
+              <g id="meridian-network" class="meridian-network">
+                <!-- 督脉/任脉 (丹田向上至泥丸宫) -->
+                <path d="M 250 262 L 250 205" class="meridian-path" id="meridian-main" />
+                <!-- 左右分枝入两肩双臂 -->
+                <path d="M 250 240 Q 232 242 224 265" class="meridian-path" id="meridian-arm-l" />
+                <path d="M 250 240 Q 268 242 276 265" class="meridian-path" id="meridian-arm-r" />
+                <!-- 左右结印下行气脉 -->
+                <path d="M 224 265 Q 238 278 250 272" class="meridian-path" id="meridian-hand-l" />
+                <path d="M 276 265 Q 262 278 250 272" class="meridian-path" id="meridian-hand-r" />
+              </g>
+
+              <!-- 丹田核心光核 (脐下三寸 250, 262) -->
+              <circle cx="250" cy="262" r="7" class="dantian-core" id="dantian-core" filter="url(#glow-cyan)" />
+
+              <!-- 破茧金光罩与裂纹 -->
+              <ellipse cx="250" cy="245" rx="55" ry="65" class="cocoon-hull" id="cocoon-hull" />
+              <g class="cocoon-cracks" id="cocoon-cracks">
+                <line x1="250" y1="180" x2="242" y2="215" class="crack-line" />
+                <line x1="242" y1="215" x2="258" y2="245" class="crack-line" />
+                <line x1="258" y1="245" x2="235" y2="280" class="crack-line" />
+                <line x1="205" y1="230" x2="235" y2="250" class="crack-line" />
+                <line x1="295" y1="230" x2="265" y2="250" class="crack-line" />
+              </g>
+
+              <!-- 周天贯通扩散冲击波 (同心圆) -->
+              <circle cx="250" cy="250" r="10" class="shockwave-ring" id="shockwave-ring-1" />
+              <circle cx="250" cy="250" r="10" class="shockwave-ring ring-lag" id="shockwave-ring-2" />
+            </g>
+          </svg>
+
+          <!-- 四个环形阵眼（覆盖在 SVG 之上，确保高响应度触摸点击） -->
+          <div class="slots-container" id="slots-container">
+            <div class="slot-node slot-pos-0" id="slot-0" data-slot="0"></div>
+            <div class="slot-node slot-pos-1" id="slot-1" data-slot="1"></div>
+            <div class="slot-node slot-pos-2" id="slot-2" data-slot="2"></div>
+            <div class="slot-node slot-pos-3" id="slot-3" data-slot="3"></div>
+          </div>
+
+          <!-- 运转数字爆发浮层（视觉焦点） -->
+          <div class="burst-overlay" id="burst-overlay">
+            <div class="burst-delta" id="burst-delta"></div>
+            <div class="burst-total" id="burst-total"></div>
+            <div class="burst-compare" id="burst-compare"></div>
+          </div>
+        </div>
+      </main>
+
+      <!-- 底部：手牌、操作按钮与新手提示 -->
+      <footer class="hud-footer">
+        <div class="hint-bar" id="hint-bar">
+          点击手牌选中 · 放入阵眼（消耗1）· 点击已有槽位可选择覆盖
+        </div>
+
+        <div class="hand-deck" id="hand-deck"></div>
+
+        <div class="action-dock">
+          <button id="btn-reset" class="btn btn-secondary">重修一局</button>
+          <button id="btn-skip" class="btn btn-warning" style="display: none;">跳过动画</button>
+          <button id="btn-run" class="btn btn-primary btn-run-large">运转周天</button>
+        </div>
       </footer>
+
+      <!-- 侧边抽屉：开发调试日志（默认隐藏） -->
+      <aside class="dev-log-drawer" id="dev-log-drawer">
+        <div class="drawer-header">
+          <h3>运转引擎实时日志</h3>
+          <button id="btn-close-log" class="btn-icon">✕</button>
+        </div>
+        <div class="drawer-body" id="log"></div>
+      </aside>
+
+      <!-- 通关与结算模态弹窗 -->
+      <div class="modal-layer" id="modal-layer" style="display: none;">
+        <div class="modal-card" id="modal-card"></div>
+      </div>
     </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

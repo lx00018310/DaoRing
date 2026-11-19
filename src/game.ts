@@ -472,7 +472,11 @@ export interface TurnExecutionResult {
 }
 
 /** 执行一次运转攻击，并自动处理天劫、破关、灵宝与战利品结算 */
-export function executeTurn(state: GameState, rng: Rng = Math.random): TurnExecutionResult {
+export function executeTurn(
+  state: GameState,
+  rng: Rng = Math.random,
+  options?: { maxRealm?: number },
+): TurnExecutionResult {
   // 若处于巅峰关卡且尚未触发天劫，先行降下天劫
   checkAndApplyTribulation(state, rng);
 
@@ -496,8 +500,9 @@ export function executeTurn(state: GameState, rng: Rng = Math.random): TurnExecu
     }
 
     // 关卡推进
+    const maxRealm = options?.maxRealm ?? 5;
     if (state.subStage === 3) {
-      if (state.realm >= 5) {
+      if (state.realm >= maxRealm) {
         state.isVictory = true;
       } else {
         state.realm += 1;
@@ -536,4 +541,26 @@ export function executeTurn(state: GameState, rng: Rng = Math.random): TurnExecu
     isVictory: state.isVictory,
     isGameOver: state.isGameOver,
   };
+}
+
+/** 创建 Demo 初始手牌（使用固定示范手牌，保证第一局真实规则下出现分裂/增幅/释放） */
+export function createDemoInitialHand(extraCapacity = 0): DaoRhyme[] {
+  const ids = ['dao_chain', 'dao_gather', 'dao_crit', 'dao_burst', 'dao_gather', 'dao_crit'];
+  const hand: DaoRhyme[] = ids.map((id) => createDao(id, 1, generateUid()));
+  while (hand.length < BOARD.initialHandSize + extraCapacity) {
+    hand.push(createDao('dao_gather', 1, generateUid()));
+  }
+  return hand;
+}
+
+/** 创建 Demo 初始状态（限制炼气期且提供固定开局手牌） */
+export function createDemoInitialGameState(talents: Record<string, number> = {}): GameState {
+  const s = createInitialGameState(Math.random, talents);
+  s.hand = createDemoInitialHand();
+  return s;
+}
+
+/** 执行 Demo 单轮回合（封顶炼气圆满，不跳转筑基） */
+export function executeDemoTurn(state: GameState, rng: Rng = Math.random): TurnExecutionResult {
+  return executeTurn(state, rng, { maxRealm: 1 });
 }
