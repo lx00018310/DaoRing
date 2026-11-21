@@ -1,9 +1,9 @@
 {
-  "name": "zhoutian-pojinglu",
+  "name": "daoring",
   "version": "0.1.0-mvp",
   "private": true,
   "type": "module",
-  "description": "《周天破境录》核心数值引擎 MVP —— 同心圆阵盘构筑 + 算分生存肉鸽",
+  "description": "DaoRing 炼气篇 Demo · 同心圆阵盘构筑 + 算分生存肉鸽",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
