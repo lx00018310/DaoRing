@@ -100,7 +100,12 @@ export function simulateBoardTick(
   const relicMods = aggregateRelicModifiers(options.relics);
   const trib = options.tribulation;
 
-  const log = (p: EnergyPulse, action: string, detail: string, qiDelta?: number): void => {
+  const log = (
+    p: EnergyPulse,
+    action: string,
+    detail: string,
+    extra?: Partial<SimulationLogEntry>,
+  ): void => {
     logs.push({
       seq: seq++,
       pulseId: p.id,
@@ -108,7 +113,7 @@ export function simulateBoardTick(
       slotIdx: p.slotIdx,
       action,
       detail,
-      ...(qiDelta === undefined ? {} : { qiDelta }),
+      ...extra,
     });
   };
 
@@ -140,7 +145,9 @@ export function simulateBoardTick(
       // 2. 道法连携检查 (Sequence Synergy)
       if (pulse.lastCategory === 'AMPLIFY' && node.category === 'AMPLIFY') {
         pulse.multiplier += 0.3;
-        log(pulse, 'SYNERGY', `【道法连携·聚气生锋】连续增幅，倍率+0.3→${pulse.multiplier.toFixed(2)}`);
+        log(pulse, 'SYNERGY', `【道法连携·聚气生锋】连续增幅，倍率+0.3→${pulse.multiplier.toFixed(2)}`, {
+          multiplierDelta: 0.3,
+        });
       } else if (pulse.lastCategory === 'CONDUCT' && node.category === 'CONDUCT') {
         pulse.ttl += 1;
         log(pulse, 'SYNERGY', `【道法连携·虚空借道】连续传导，TTL+1→${pulse.ttl}`);
@@ -157,7 +164,9 @@ export function simulateBoardTick(
           // 极尽升华连携：上一步若是增幅，释放系数额外 +0.2
           if (pulse.lastCategory === 'AMPLIFY') {
             factor += 0.2;
-            log(pulse, 'SYNERGY', `【道法连携·极尽升华】增幅直入释放，系数+0.2`);
+            log(pulse, 'SYNERGY', `【道法连携·极尽升华】增幅直入释放，系数+0.2`, {
+              multiplierDelta: 0.2,
+            });
           }
           // 天劫释放加成
           if (trib?.modifiers.releaseMultiplierBonus) {
@@ -173,7 +182,7 @@ export function simulateBoardTick(
             pulse,
             'RELEASE',
             `${node.name}(LV${node.level})${ringResonance.isMono ? '【共鸣】' : ''} · ${pulse.baseQi} × ${pulse.multiplier.toFixed(2)} × ${factor.toFixed(2)}`,
-            qi,
+            { qiDelta: qi },
           );
           continue; // 能量束终结
         }
@@ -182,7 +191,9 @@ export function simulateBoardTick(
         case 'GATHER': {
           const add = Math.round((params.baseQiAdd ?? 0) * resonanceFactor);
           pulse.baseQi += add;
-          log(pulse, 'AMPLIFY', `${node.name}${ringResonance.isMono ? '【共鸣】' : ''} · baseQi+${add}→${pulse.baseQi}`);
+          log(pulse, 'AMPLIFY', `${node.name}${ringResonance.isMono ? '【共鸣】' : ''} · baseQi+${add}→${pulse.baseQi}`, {
+            baseQiDelta: add,
+          });
           break;
         }
         case 'CRIT': {
@@ -193,17 +204,24 @@ export function simulateBoardTick(
           const critFactor = (params.critFactor ?? 1) + (relicMods.critFactorBonus ?? 0);
 
           let detail = `${node.name}${ringResonance.isMono ? '【共鸣】' : ''} · 倍率+${multAdd.toFixed(2)}→${pulse.multiplier.toFixed(2)}`;
-          if (rng() < critChance) {
+          const isCrit = rng() < critChance;
+          if (isCrit) {
             pulse.multiplier *= critFactor;
             detail += ` · 暴击×${critFactor.toFixed(2)}→${pulse.multiplier.toFixed(2)}`;
           }
-          log(pulse, 'AMPLIFY', detail);
+          log(pulse, 'AMPLIFY', detail, {
+            multiplierDelta: multAdd,
+            isCrit,
+            critFactor: isCrit ? critFactor : undefined,
+          });
           break;
         }
         case 'RESONANCE': {
           const gain = (params.multiplierPerJump ?? 0) * pulse.jumpCount * resonanceFactor;
           pulse.multiplier += gain;
-          log(pulse, 'AMPLIFY', `${node.name}${ringResonance.isMono ? '【共鸣】' : ''} · 升环${pulse.jumpCount}次 · 倍率+${gain.toFixed(2)}→${pulse.multiplier.toFixed(2)}`);
+          log(pulse, 'AMPLIFY', `${node.name}${ringResonance.isMono ? '【共鸣】' : ''} · 升环${pulse.jumpCount}次 · 倍率+${gain.toFixed(2)}→${pulse.multiplier.toFixed(2)}`, {
+            multiplierDelta: gain,
+          });
           break;
         }
 
@@ -215,25 +233,39 @@ export function simulateBoardTick(
 
             // 太虚神行灵宝：升维跃迁时克隆衍生能量束（顺位偏移下一格）
             if (relicMods.jumpCloneChance && rng() < relicMods.jumpCloneChance && totalSpawned < BOARD.maxPulses) {
+              const cloneId = `P${totalSpawned}`;
               const clone: EnergyPulse = {
                 ...pulse,
-                id: `P${totalSpawned}`,
+                id: cloneId,
                 slotIdx: (pulse.slotIdx + 1) % ring.maxSlots,
               };
               activeQueue.push(clone);
               totalSpawned += 1;
-              log(pulse, 'RELIC_CLONE', `【太虚神行】跃迁克隆衍生出 1 股新能量至 Slot${clone.slotIdx}`);
+              log(pulse, 'RELIC_CLONE', `【太虚神行】跃迁克隆衍生出 1 股新能量至 Slot${clone.slotIdx}`, {
+                spawnedPulseIds: [cloneId],
+                spawnedSlots: [clone.slotIdx],
+              });
             }
 
+            const fromR = pulse.ringIdx;
+            const fromS = pulse.slotIdx;
             pulse.slotIdx = Math.floor((pulse.slotIdx * nextRing.maxSlots) / ring.maxSlots);
             pulse.ringIdx += 1;
             pulse.stepsInCurrentRing = 0;
             pulse.jumpCount += 1;
             forcedCrossRing = true;
             skipTtlDecay = true;
-            log(pulse, 'FORCE_JUMP', `${node.name} · 升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · baseQi=${pulse.baseQi}（免TTL）`);
+            log(pulse, 'FORCE_JUMP', `${node.name} · 升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · baseQi=${pulse.baseQi}（免TTL）`, {
+              fromRing: fromR,
+              fromSlot: fromS,
+              toRing: pulse.ringIdx,
+              toSlot: pulse.slotIdx,
+              baseQiDelta: params.baseQiBonus ?? 0,
+            });
           } else {
-            log(pulse, 'FORCE_JUMP', `${node.name} · 已在最外环 · baseQi=${pulse.baseQi}`);
+            log(pulse, 'FORCE_JUMP', `${node.name} · 已在最外环 · baseQi=${pulse.baseQi}`, {
+              baseQiDelta: params.baseQiBonus ?? 0,
+            });
           }
           break;
         }
@@ -244,13 +276,20 @@ export function simulateBoardTick(
             rng() < (params.reverseChance ?? 0)
           ) {
             const innerRing = board[pulse.ringIdx - 1];
+            const fromR = pulse.ringIdx;
+            const fromS = pulse.slotIdx;
             pulse.slotIdx = Math.floor((pulse.slotIdx * innerRing.maxSlots) / ring.maxSlots);
             pulse.ringIdx -= 1;
             pulse.stepsInCurrentRing = 0;
             pulse.reverseCount += 1;
             pulse.ttl += params.ttlRestore ?? 0;
             forcedCrossRing = true;
-            log(pulse, 'REVERSE_FLOW', `${node.name} · 倒灌→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · TTL+${params.ttlRestore}→${pulse.ttl}（${pulse.reverseCount}/${params.maxTriggers}）`);
+            log(pulse, 'REVERSE_FLOW', `${node.name} · 倒灌→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · TTL+${params.ttlRestore}→${pulse.ttl}（${pulse.reverseCount}/${params.maxTriggers}）`, {
+              fromRing: fromR,
+              fromSlot: fromS,
+              toRing: pulse.ringIdx,
+              toSlot: pulse.slotIdx,
+            });
           }
           break;
         }
@@ -259,21 +298,30 @@ export function simulateBoardTick(
           const extra = rng() < (params.extraSplitChance ?? 0) ? 1 : 0;
           const splitCount = guaranteed + extra;
           let spawned = 0;
+          const spawnedIds: string[] = [];
+          const spawnedSlots: number[] = [];
           for (let i = 0; i < splitCount; i += 1) {
             if (totalSpawned >= BOARD.maxPulses) {
               log(pulse, 'SPLIT_LIMIT', `衍生能量已达上限 ${BOARD.maxPulses}，停止分裂`);
               break;
             }
+            const sIdx = (pulse.slotIdx + 1 + i) % ring.maxSlots;
+            const cloneId = `P${totalSpawned}`;
             const clone: EnergyPulse = {
               ...pulse,
-              id: `P${totalSpawned}`,
-              slotIdx: (pulse.slotIdx + 1 + i) % ring.maxSlots,
+              id: cloneId,
+              slotIdx: sIdx,
             };
             activeQueue.push(clone);
             totalSpawned += 1;
             spawned += 1;
+            spawnedIds.push(cloneId);
+            spawnedSlots.push(sIdx);
           }
-          log(pulse, 'CHAIN_SPLIT', `${node.name} · 分裂${spawned}股（额外${((params.extraSplitChance ?? 0) * 100).toFixed(0)}%）`);
+          log(pulse, 'CHAIN_SPLIT', `${node.name} · 分裂${spawned}股（额外${((params.extraSplitChance ?? 0) * 100).toFixed(0)}%）`, {
+            spawnedPulseIds: spawnedIds,
+            spawnedSlots,
+          });
           break;
         }
       }
@@ -299,6 +347,8 @@ export function simulateBoardTick(
     // ---------- 步骤 C：默认移动与满圈自动升环 ----------
     if (!forcedCrossRing) {
       const currentRing = board[pulse.ringIdx];
+      const fromR = pulse.ringIdx;
+      const fromS = pulse.slotIdx;
       pulse.stepsInCurrentRing += 1;
       if (pulse.stepsInCurrentRing >= currentRing.maxSlots) {
         if (pulse.ringIdx + 1 < unlockedRings) {
@@ -311,17 +361,38 @@ export function simulateBoardTick(
           // 五行转轮灵宝：升环增加 baseQi
           if (relicMods.ascendBaseQiBonus) {
             pulse.baseQi += relicMods.ascendBaseQiBonus;
-            log(pulse, 'AUTO_ASCEND', `走满一圈 · 自动升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · 【五行转轮】baseQi+${relicMods.ascendBaseQiBonus}→${pulse.baseQi}`);
+            log(pulse, 'AUTO_ASCEND', `走满一圈 · 自动升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx} · 【五行转轮】baseQi+${relicMods.ascendBaseQiBonus}→${pulse.baseQi}`, {
+              fromRing: fromR,
+              fromSlot: fromS,
+              toRing: pulse.ringIdx,
+              toSlot: pulse.slotIdx,
+              baseQiDelta: relicMods.ascendBaseQiBonus,
+            });
           } else {
-            log(pulse, 'AUTO_ASCEND', `走满一圈 · 自动升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx}`);
+            log(pulse, 'AUTO_ASCEND', `走满一圈 · 自动升环→Ring${pulse.ringIdx} Slot${pulse.slotIdx}`, {
+              fromRing: fromR,
+              fromSlot: fromS,
+              toRing: pulse.ringIdx,
+              toSlot: pulse.slotIdx,
+            });
           }
         } else {
           pulse.slotIdx = (pulse.slotIdx + 1) % currentRing.maxSlots;
-          log(pulse, 'OUTER_LOOP', `最外环巡航→Slot${pulse.slotIdx}`);
+          log(pulse, 'OUTER_LOOP', `最外环巡航→Slot${pulse.slotIdx}`, {
+            fromRing: fromR,
+            fromSlot: fromS,
+            toRing: fromR,
+            toSlot: pulse.slotIdx,
+          });
         }
       } else {
         pulse.slotIdx = (pulse.slotIdx + 1) % currentRing.maxSlots;
-        log(pulse, 'MOVE', `顺时针→Slot${pulse.slotIdx}（${pulse.stepsInCurrentRing}/${currentRing.maxSlots}）`);
+        log(pulse, 'MOVE', `顺时针→Slot${pulse.slotIdx}（${pulse.stepsInCurrentRing}/${currentRing.maxSlots}）`, {
+          fromRing: fromR,
+          fromSlot: fromS,
+          toRing: fromR,
+          toSlot: pulse.slotIdx,
+        });
       }
     }
 

@@ -80,4 +80,33 @@ describe('阵盘放置与燃料经济测试 (Fuel & Placement Economy)', () => {
     const resOutOfBound = placeDao(state, card.uid, 0, 4);
     expect(resOutOfBound.success).toBe(false);
   });
+
+  it('非法参数（小数、负数、NaN、不存在燃料）原子拒绝且不扣除手牌与改阵', () => {
+    const state = createInitialGameState();
+    const initialHandCount = state.hand.length;
+    const card = state.hand[0];
+
+    // 负数
+    const resNeg = placeDao(state, card.uid, -1, 0);
+    expect(resNeg.success).toBe(false);
+    expect(state.hand.length).toBe(initialHandCount);
+
+    // 小数
+    const resFloat = placeDao(state, card.uid, 0, 1.5);
+    expect(resFloat.success).toBe(false);
+    expect(state.hand.length).toBe(initialHandCount);
+
+    // NaN
+    const resNaN = placeDao(state, card.uid, 0, NaN);
+    expect(resNaN.success).toBe(false);
+    expect(state.hand.length).toBe(initialHandCount);
+
+    // 移位非法参数
+    placeDao(state, card.uid, 0, 0);
+    const handCountAfterPlace = state.hand.length;
+    const resMoveNaN = moveDao(state, 0, 0, 0, NaN, 'invalid_fuel');
+    expect(resMoveNaN.success).toBe(false);
+    expect(state.hand.length).toBe(handCountAfterPlace);
+    expect(state.board[0].slots[0]?.uid).toBe(card.uid);
+  });
 });

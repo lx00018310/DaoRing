@@ -1,12 +1,13 @@
 // ============================================================
 // 纯原生 Web Audio API 声音合成模块
-// 零外部资源依赖，防 404，支持静音开关与用户手势解锁
+// 零外部资源依赖，防 404，支持静音开关与用户手势解锁与完整取消回收
 // ============================================================
 
 class SoundManager {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
   private unlocked: boolean = false;
+  private pendingTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor() {
     try {
@@ -43,11 +44,30 @@ class SoundManager {
     } catch {
       // ignore
     }
+    if (this.isMuted) {
+      this.stopAll();
+    }
     return this.isMuted;
   }
 
   public getMuted(): boolean {
     return this.isMuted;
+  }
+
+  /** 取消所有尚未触发的延迟音效 */
+  public stopAll(): void {
+    this.pendingTimers.forEach((t) => clearTimeout(t));
+    this.pendingTimers = [];
+  }
+
+  private safeSetTimeout(fn: () => void, delayMs: number): void {
+    if (this.isMuted) return;
+    const timer = setTimeout(() => {
+      const idx = this.pendingTimers.indexOf(timer);
+      if (idx !== -1) this.pendingTimers.splice(idx, 1);
+      if (!this.isMuted) fn();
+    }, delayMs);
+    this.pendingTimers.push(timer);
   }
 
   /** 播放简短正弦音 */
@@ -92,7 +112,7 @@ class SoundManager {
   public playAmplify(isSplit = false): void {
     if (isSplit) {
       this.playTone(659.25, 'sine', 0.18, 0.15); // E5
-      setTimeout(() => this.playTone(880, 'sine', 0.2, 0.12), 70); // A5
+      this.safeSetTimeout(() => this.playTone(880, 'sine', 0.2, 0.12), 70); // A5
     } else {
       this.playTone(587.33, 'sine', 0.2, 0.12); // D5
     }
@@ -105,9 +125,8 @@ class SoundManager {
     if (!ctx) return;
 
     try {
-      // 低频轰鸣 + 高频清脆音
       this.playTone(130.81, 'triangle', 0.45, 0.25); // C3
-      setTimeout(() => this.playTone(523.25, 'sine', 0.35, 0.15), 50);
+      this.safeSetTimeout(() => this.playTone(523.25, 'sine', 0.35, 0.15), 50);
     } catch {
       // ignore
     }
@@ -139,7 +158,7 @@ class SoundManager {
   /** 终局：经脉流光激活音 (0.7~1.5s) */
   public playFinaleMeridian(): void {
     [330, 392, 440, 523, 659].forEach((freq, idx) => {
-      setTimeout(() => {
+      this.safeSetTimeout(() => {
         this.playTone(freq, 'sine', 0.22, 0.08);
       }, idx * 120);
     });
@@ -148,7 +167,7 @@ class SoundManager {
   /** 终局：短促破茧音 (1.5~2.3s) */
   public playFinaleBreak(): void {
     this.playTone(220, 'sawtooth', 0.3, 0.18);
-    setTimeout(() => this.playTone(880, 'sine', 0.4, 0.2), 60);
+    this.safeSetTimeout(() => this.playTone(880, 'sine', 0.4, 0.2), 60);
   }
 
   /** 终局：金色冲击波与周天圆满清亮大音 (2.3~4.0s) */
@@ -156,7 +175,7 @@ class SoundManager {
     if (this.isMuted) return;
     const freqs = [261.63, 329.63, 392.0, 523.25, 659.25, 783.99]; // C和弦如沐仙光
     freqs.forEach((f, idx) => {
-      setTimeout(() => {
+      this.safeSetTimeout(() => {
         this.playTone(f, 'sine', 1.2, 0.15 - idx * 0.015);
       }, idx * 90);
     });

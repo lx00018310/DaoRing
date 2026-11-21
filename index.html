@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>周天破境录：炼气篇</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
@@ -150,10 +150,10 @@
 
           <!-- 四个环形阵眼（覆盖在 SVG 之上，确保高响应度触摸点击） -->
           <div class="slots-container" id="slots-container">
-            <div class="slot-node slot-pos-0" id="slot-0" data-slot="0"></div>
-            <div class="slot-node slot-pos-1" id="slot-1" data-slot="1"></div>
-            <div class="slot-node slot-pos-2" id="slot-2" data-slot="2"></div>
-            <div class="slot-node slot-pos-3" id="slot-3" data-slot="3"></div>
+            <div class="slot-node slot-pos-0" id="slot-0" data-slot="0" role="button" tabindex="0" aria-label="第一眼 · 入气"></div>
+            <div class="slot-node slot-pos-1" id="slot-1" data-slot="1" role="button" tabindex="0" aria-label="第二眼"></div>
+            <div class="slot-node slot-pos-2" id="slot-2" data-slot="2" role="button" tabindex="0" aria-label="第三眼"></div>
+            <div class="slot-node slot-pos-3" id="slot-3" data-slot="3" role="button" tabindex="0" aria-label="第四眼"></div>
           </div>
 
           <!-- 运转数字爆发浮层（视觉焦点） -->
@@ -190,7 +190,7 @@
       </aside>
 
       <!-- 通关与结算模态弹窗 -->
-      <div class="modal-layer" id="modal-layer" style="display: none;">
+      <div class="modal-layer" id="modal-layer" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-card" id="modal-card"></div>
       </div>
     </div>

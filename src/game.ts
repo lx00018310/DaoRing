@@ -13,6 +13,7 @@ import {
   getStageConfig,
   getTribulationConfig,
 } from './config';
+import { DEMO_CONFIG, demoSession } from './demoConfig';
 import { runTurn } from './engine';
 import { getAppliedTalentBonuses } from './karma';
 import type {
@@ -23,6 +24,7 @@ import type {
   RunStats,
   SimulationResult,
   TribulationConfig,
+  TurnContext,
 } from './types';
 
 let nextUid = 1;
@@ -31,6 +33,12 @@ export function generateUid(prefix = 'dao'): string {
 }
 
 type Rng = () => number;
+
+/** 计算当前全局状态下的实际有效运转真气消耗 */
+export function getEffectiveQiCost(state: GameState): number {
+  if (state.freeTurnsLeft > 0) return 0;
+  return state.nextQiCost;
+}
 
 /** 创建 5 层同心圆阵盘（跨局永久保留） */
 export function createInitialBoard(unlockedCount = 1): RingTrack[] {
@@ -148,12 +156,16 @@ export function placeDao(
     return { success: false, message: '游戏已结束，无法调整阵盘' };
   }
 
+  // 参数合法性与整数校验
+  if (!Number.isInteger(ringIdx) || ringIdx < 0 || ringIdx >= state.board.length) {
+    return { success: false, message: '目标环索引不合法' };
+  }
   const ring = state.board[ringIdx];
   if (!ring || !ring.unlocked) {
     return { success: false, message: '目标环未解锁或不存在' };
   }
-  if (slotIdx < 0 || slotIdx >= ring.maxSlots) {
-    return { success: false, message: '目标槽位超出该环上限' };
+  if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx >= ring.maxSlots) {
+    return { success: false, message: '目标槽位超出该环上限或不合法' };
   }
 
   const cardIdx = state.hand.findIndex((c) => c.uid === handCardUid);
@@ -223,9 +235,15 @@ export function removeDao(
     return { success: false, message: '游戏已结束，无法调整阵盘' };
   }
 
+  if (!Number.isInteger(ringIdx) || ringIdx < 0 || ringIdx >= state.board.length) {
+    return { success: false, message: '目标环索引不合法' };
+  }
   const ring = state.board[ringIdx];
   if (!ring || !ring.unlocked) {
     return { success: false, message: '目标环未解锁' };
+  }
+  if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx >= ring.maxSlots) {
+    return { success: false, message: '目标槽位超出该环上限或不合法' };
   }
   if (!ring.slots[slotIdx]) {
     return { success: false, message: '目标槽位为空，无需拆除' };
@@ -266,16 +284,40 @@ export function moveDao(
     return { success: false, message: '游戏已结束，无法调整阵盘' };
   }
 
+  if (
+    !Number.isInteger(fromRing) ||
+    !Number.isInteger(toRing) ||
+    fromRing < 0 ||
+    fromRing >= state.board.length ||
+    toRing < 0 ||
+    toRing >= state.board.length
+  ) {
+    return { success: false, message: '源环或目标环索引不合法' };
+  }
+
   const srcRing = state.board[fromRing];
   const dstRing = state.board[toRing];
   if (!srcRing || !srcRing.unlocked || !dstRing || !dstRing.unlocked) {
     return { success: false, message: '源环或目标环未解锁' };
   }
+  if (!Number.isInteger(fromSlot) || fromSlot < 0 || fromSlot >= srcRing.maxSlots) {
+    return { success: false, message: '源槽位索引不合法' };
+  }
+  if (!Number.isInteger(toSlot) || toSlot < 0 || toSlot >= dstRing.maxSlots) {
+    return { success: false, message: '目标槽位索引不合法' };
+  }
+
   if (!srcRing.slots[fromSlot]) {
     return { success: false, message: '源槽位没有道韵' };
   }
   if (dstRing.slots[toSlot] !== null) {
     return { success: false, message: '目标槽位已有道韵，无法直接移位（请使用覆盖）' };
+  }
+
+  // 校验目标环是否还有空槽（满盘检查）
+  const hasEmptySlot = dstRing.slots.some((s) => s === null);
+  if (!hasEmptySlot) {
+    return { success: false, message: '目标环已满，无可用空槽可供移位' };
   }
 
   const fuelWaived = checkFreeFuel(state.appliedTalents, rng);
@@ -300,6 +342,39 @@ export function moveDao(
       ? `【炉火纯青】免燃料，已将 ${target!.name} 移位至 Ring ${toRing} Slot ${toSlot}`
       : `消耗 1 张燃料卡，已将 ${target!.name} 移位至 Ring ${toRing} Slot ${toSlot}`,
     fuelWaived,
+  };
+}
+
+/**
+ * V3 教学优化：判断阵眼上的道韵是否可在初期无损收回手牌
+ * 规则：炼气初期（1-1）、未结束、属于两张开局牌（聚灵/灵爆）
+ */
+export function canRecallDao(state: GameState, ringIdx: number, slotIdx: number): boolean {
+  if (state.isGameOver || state.isVictory) return false;
+  if (state.realm !== 1 || state.subStage !== 1) return false;
+  const ring = state.board[ringIdx];
+  if (!ring || !ring.unlocked) return false;
+  const node = ring.slots[slotIdx];
+  if (!node) return false;
+  // 属于初期开局的两张卡之一
+  return node.configId === 'dao_gather' || node.configId === 'dao_burst';
+}
+
+/**
+ * V3 教学优化：无燃料消耗将开局道韵收回手牌（仅初期生效）
+ */
+export function recallDao(state: GameState, ringIdx: number, slotIdx: number): PlacementResult {
+  if (!canRecallDao(state, ringIdx, slotIdx)) {
+    return { success: false, message: '当前条件不满足无损收回道韵规则' };
+  }
+  const ring = state.board[ringIdx];
+  const target = ring.slots[slotIdx]!;
+  ring.slots[slotIdx] = null;
+  state.hand.push(target);
+  return {
+    success: true,
+    message: `已无损收回【${target.name}】至手牌，可重新调整布阵。`,
+    fuelWaived: true,
   };
 }
 
@@ -420,13 +495,18 @@ export function refineDaoWithCatalyst(
 // 先天灵宝与天劫系统
 // ------------------------------------------------------------
 
-/** 随机抽取 3 个尚未获得的先天灵宝供玩家三选一 */
+/** 随机抽取 3 个尚未获得的先天灵宝供玩家三选一 (Fisher-Yates 洗牌) */
 export function drawRelicChoices(state: GameState, count = 3, rng: Rng = Math.random): RelicConfig[] {
   const available = ALL_RELIC_IDS.filter((id) => !state.relics.includes(id));
   if (available.length === 0) return [];
 
-  // 打乱洗牌
-  const shuffled = [...available].sort(() => rng() - 0.5);
+  const shuffled = [...available];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const temp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = temp;
+  }
   const pickedIds = shuffled.slice(0, Math.min(count, shuffled.length));
   return pickedIds.map((id) => getRelicConfig(id));
 }
@@ -441,10 +521,14 @@ export function equipRelic(state: GameState, relicId: string): { success: boolea
   return { success: true, message: `已成功融合先天灵宝【${cfg.name}】！${cfg.description}` };
 }
 
-/** 检测并在巅峰小关降下天劫 */
-export function checkAndApplyTribulation(state: GameState, rng: Rng = Math.random): TribulationConfig | null {
+/** 检测并在巅峰小关降下天劫（支持指定天劫 ID，如教学玄黄祥云劫） */
+export function checkAndApplyTribulation(
+  state: GameState,
+  rng: Rng = Math.random,
+  fixedTribId?: string,
+): TribulationConfig | null {
   if (state.subStage === 3 && state.activeTribulation === null) {
-    const tribId = ALL_TRIBULATION_IDS[Math.floor(rng() * ALL_TRIBULATION_IDS.length)];
+    const tribId = fixedTribId ?? ALL_TRIBULATION_IDS[Math.floor(rng() * ALL_TRIBULATION_IDS.length)];
     const trib = getTribulationConfig(tribId);
     state.activeTribulation = trib;
     if (trib.modifiers.freeTurnsCount) {
@@ -469,16 +553,51 @@ export interface TurnExecutionResult {
   tribulationEncountered?: TribulationConfig | null;
   isVictory: boolean;
   isGameOver: boolean;
+  context: TurnContext;
 }
 
 /** 执行一次运转攻击，并自动处理天劫、破关、灵宝与战利品结算 */
 export function executeTurn(
   state: GameState,
   rng: Rng = Math.random,
-  options?: { maxRealm?: number },
+  options?: { maxRealm?: number; fixedTribulationId?: string },
 ): TurnExecutionResult {
+  // 防御性边界：已结束状态下调用保持绝对幂等
+  if (state.isGameOver || state.isVictory) {
+    const emptyContext: TurnContext = {
+      realm: state.realm,
+      subStage: state.subStage,
+      stageName: getStageConfig(state.realm, state.subStage).name,
+      stageThreshold: state.stageThreshold,
+      effectiveCost: 0,
+      qiBefore: state.currentQi,
+      activeTribulation: state.activeTribulation,
+    };
+    return {
+      charged: 0,
+      simulation: { turnQiGenerated: 0, logs: [], totalSpawned: 0, releasedCount: 0, expiredCount: 0 },
+      cleared: false,
+      lootAwarded: [],
+      newRealmUnlocked: false,
+      isVictory: state.isVictory,
+      isGameOver: state.isGameOver,
+      context: emptyContext,
+    };
+  }
+
   // 若处于巅峰关卡且尚未触发天劫，先行降下天劫
-  checkAndApplyTribulation(state, rng);
+  checkAndApplyTribulation(state, rng, options?.fixedTribulationId);
+
+  // 严格在状态修改前捕获本轮执行上下文（前态事实）
+  const context: TurnContext = {
+    realm: state.realm,
+    subStage: state.subStage,
+    stageName: getStageConfig(state.realm, state.subStage).name,
+    stageThreshold: state.stageThreshold,
+    effectiveCost: getEffectiveQiCost(state),
+    qiBefore: state.currentQi,
+    activeTribulation: state.activeTribulation,
+  };
 
   const { result, charged, cleared } = runTurn(state, rng);
 
@@ -518,7 +637,7 @@ export function executeTurn(
     } else {
       state.subStage += 1;
       // 若下一关是巅峰关，提前触发天劫
-      tribulationEncountered = checkAndApplyTribulation(state, rng);
+      tribulationEncountered = checkAndApplyTribulation(state, rng, options?.fixedTribulationId);
     }
 
     // 重置本关已运转次数与费用
@@ -540,27 +659,24 @@ export function executeTurn(
     tribulationEncountered,
     isVictory: state.isVictory,
     isGameOver: state.isGameOver,
+    context,
   };
 }
 
-/** 创建 Demo 初始手牌（使用固定示范手牌，保证第一局真实规则下出现分裂/增幅/释放） */
-export function createDemoInitialHand(extraCapacity = 0): DaoRhyme[] {
-  const ids = ['dao_chain', 'dao_gather', 'dao_crit', 'dao_burst', 'dao_gather', 'dao_crit'];
-  const hand: DaoRhyme[] = ids.map((id) => createDao(id, 1, generateUid()));
-  while (hand.length < BOARD.initialHandSize + extraCapacity) {
-    hand.push(createDao('dao_gather', 1, generateUid()));
-  }
-  return hand;
+/** 创建 Demo 初始手牌（V3 规则：1 张聚灵 + 1 张灵爆） */
+export function createDemoInitialHand(): DaoRhyme[] {
+  return DEMO_CONFIG.fixedFirstHandIds.map((id) => createDao(id, 1, generateUid('init_dao')));
 }
 
-/** 创建 Demo 初始状态（限制炼气期且提供固定开局手牌） */
+/** 创建 Demo 初始状态（限制炼气期且提供 V3 固定开局两张手牌） */
 export function createDemoInitialGameState(talents: Record<string, number> = {}): GameState {
   const s = createInitialGameState(Math.random, talents);
   s.hand = createDemoInitialHand();
   return s;
 }
 
-/** 执行 Demo 单轮回合（封顶炼气圆满，不跳转筑基） */
+/** 执行 Demo 单轮回合（封顶炼气圆满，不跳转筑基；首局锁定祥云劫） */
 export function executeDemoTurn(state: GameState, rng: Rng = Math.random): TurnExecutionResult {
-  return executeTurn(state, rng, { maxRealm: 1 });
+  const fixedTribId = !demoSession.isFirstClearCompleted ? DEMO_CONFIG.fixedTribulationId : undefined;
+  return executeTurn(state, rng, { maxRealm: 1, fixedTribulationId: fixedTribId });
 }

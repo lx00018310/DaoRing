@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDao, getStageConfig } from '../src/config';
-import { createInitialGameState, executeTurn, placeDao } from '../src/game';
+import { createInitialGameState, drawRelicChoices, executeTurn, placeDao } from '../src/game';
 
 describe('游戏状态流转与关卡推进测试 (Game State & Loop)', () => {
   it('开局初始状态：气池 100，手牌 6 张且必含至少 1 张灵爆术', () => {
@@ -92,5 +92,32 @@ describe('游戏状态流转与关卡推进测试 (Game State & Loop)', () => {
     expect(state.realm).toBe(2);
     expect(state.subStage).toBe(1);
     expect(state.board[1].unlocked).toBe(true);
+  });
+
+  it('drawRelicChoices 使用 Fisher-Yates 抽样，确定性随机源时结果可复算且候选唯一未装备', () => {
+    const state = createInitialGameState();
+    state.relics = ['relic_cyan_lotus']; // 已装备青莲
+
+    // 采用恒定 rng 0.1
+    const choices = drawRelicChoices(state, 3, () => 0.1);
+    expect(choices.length).toBe(3);
+    // 确保不包含已装配的 relic
+    expect(choices.some((r) => r.id === 'relic_cyan_lotus')).toBe(false);
+    // 候选唯一
+    const ids = choices.map((r) => r.id);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it('已结束游戏再次调用 executeTurn 保持原子幂等', () => {
+    const state = createInitialGameState();
+    state.isGameOver = true;
+    state.currentQi = 50;
+    const rngMock = () => 0.5;
+
+    const res = executeTurn(state, rngMock);
+    expect(res.simulation.turnQiGenerated).toBe(0);
+    expect(res.charged).toBe(0);
+    expect(res.cleared).toBe(false);
+    expect(state.currentQi).toBe(50);
   });
 });

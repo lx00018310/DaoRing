@@ -207,6 +207,29 @@ export interface SimulationLogEntry {
   action: string;
   detail: string;
   qiDelta?: number;
+
+  // V3 结构化字段供演出与分析回溯
+  fromRing?: number;
+  fromSlot?: number;
+  toRing?: number;
+  toSlot?: number;
+  spawnedPulseIds?: string[];
+  spawnedSlots?: number[];
+  baseQiDelta?: number;
+  multiplierDelta?: number;
+  critFactor?: number;
+  isCrit?: boolean;
+}
+
+/** 回合执行前的快照上下文（防跨阶段污染、保持前态一致） */
+export interface TurnContext {
+  realm: number;
+  subStage: number;
+  stageName: string;
+  stageThreshold: number;
+  effectiveCost: number;
+  qiBefore: number;
+  activeTribulation: TribulationConfig | null;
 }
 
 /** 单次运转仿真结果 */
