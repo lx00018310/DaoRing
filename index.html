@@ -37,8 +37,8 @@
         </div>
 
         <div class="hud-tools">
-          <button id="btn-audio" class="tool-btn" title="声音开关">🔊</button>
-          <button id="btn-toggle-log" class="tool-btn" title="开发调试日志">📜</button>
+          <button id="btn-audio" class="tool-btn" aria-label="静音" aria-pressed="false">🔊</button>
+          <button id="btn-toggle-log" class="tool-btn" aria-label="开发调试日志" aria-controls="dev-log-drawer" aria-expanded="false">📜</button>
         </div>
       </header>
 
@@ -47,7 +47,7 @@
         <div class="cave-mist"></div>
         <div class="circle-stage" id="circle-stage">
           <!-- SVG 矢量背景、连线轨道、修士剪影与破茧光效 -->
-          <svg class="stage-svg" viewBox="0 0 500 500" id="stage-svg">
+          <svg class="stage-svg" viewBox="0 0 500 500" id="stage-svg" aria-hidden="true">
             <defs>
               <!-- 阵盘背景径向渐变 -->
               <radialGradient id="grad-disk" cx="50%" cy="50%" r="50%">
@@ -146,15 +146,19 @@
               <circle cx="250" cy="250" r="10" class="shockwave-ring" id="shockwave-ring-1" />
               <circle cx="250" cy="250" r="10" class="shockwave-ring ring-lag" id="shockwave-ring-2" />
             </g>
+            <text class="orbit-direction" x="365" y="104">↻ 顺时针</text>
           </svg>
 
           <!-- 四个环形阵眼（覆盖在 SVG 之上，确保高响应度触摸点击） -->
           <div class="slots-container" id="slots-container">
-            <div class="slot-node slot-pos-0" id="slot-0" data-slot="0" role="button" tabindex="0" aria-label="第一眼 · 入气"></div>
-            <div class="slot-node slot-pos-1" id="slot-1" data-slot="1" role="button" tabindex="0" aria-label="第二眼"></div>
-            <div class="slot-node slot-pos-2" id="slot-2" data-slot="2" role="button" tabindex="0" aria-label="第三眼"></div>
-            <div class="slot-node slot-pos-3" id="slot-3" data-slot="3" role="button" tabindex="0" aria-label="第四眼"></div>
+            <button class="slot-node slot-pos-0" id="slot-0" type="button"></button>
+            <button class="slot-node slot-pos-1" id="slot-1" type="button"></button>
+            <button class="slot-node slot-pos-2" id="slot-2" type="button"></button>
+            <button class="slot-node slot-pos-3" id="slot-3" type="button"></button>
           </div>
+          <svg class="stage-svg pulse-svg" viewBox="0 0 500 500" aria-hidden="true">
+            <g id="energy-pulses"></g>
+          </svg>
 
           <!-- 运转数字爆发浮层（视觉焦点） -->
           <div class="burst-overlay" id="burst-overlay">
@@ -162,6 +166,7 @@
             <div class="burst-total" id="burst-total"></div>
             <div class="burst-compare" id="burst-compare"></div>
           </div>
+          <div class="finale-title" id="finale-title" hidden>炼气圆满</div>
         </div>
       </main>
 
@@ -171,6 +176,7 @@
           点击手牌选中 · 放入阵眼（消耗1）· 点击已有槽位可选择覆盖
         </div>
 
+        <p class="action-feedback" id="action-feedback" role="status" hidden></p>
         <div class="hand-deck" id="hand-deck"></div>
 
         <div class="action-dock">
@@ -181,18 +187,19 @@
       </footer>
 
       <!-- 侧边抽屉：开发调试日志（默认隐藏） -->
-      <aside class="dev-log-drawer" id="dev-log-drawer">
+      <aside class="dev-log-drawer" id="dev-log-drawer" hidden>
         <div class="drawer-header">
           <h3>运转引擎实时日志</h3>
-          <button id="btn-close-log" class="btn-icon">✕</button>
+          <button id="btn-export-log" type="button" class="btn btn-secondary">导出试玩记录</button>
+          <button id="btn-close-log" class="btn-icon" aria-label="关闭调试日志">✕</button>
         </div>
         <div class="drawer-body" id="log"></div>
       </aside>
 
       <!-- 通关与结算模态弹窗 -->
-      <div class="modal-layer" id="modal-layer" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <dialog class="modal-layer" id="modal-layer" aria-labelledby="modal-title">
         <div class="modal-card" id="modal-card"></div>
-      </div>
+      </dialog>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

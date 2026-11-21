@@ -125,6 +125,8 @@ export type DemoAnalyticsEvent =
   | 'first_card_placed'
   | 'first_run'
   | 'first_release'
+  | 'turn_resolved'
+  | 'branch_chosen'
   | 'stage_clear'
   | 'run_end'
   | 'restart';
@@ -138,26 +140,49 @@ export interface AnalyticsRecord {
   tribulationId?: string;
   stageThreshold?: number;
   effectiveCost?: number;
+  charged?: number;
   qiGenerated?: number;
   boardSlots?: (string | null)[];
   branchChoice?: string;
   boardModified?: boolean;
   highestQi?: number;
-  endType?: 'VICTORY' | 'GAMEOVER' | 'RESTART';
+  endType?: 'VICTORY' | 'GAMEOVER' | 'ABANDONED' | 'REPLAY';
   watchedRelease?: boolean;
   skipped?: boolean;
   detail?: string;
 }
 
 class DemoAnalytics {
-  private runId: string = Math.random().toString(36).substring(2, 9);
-  private records: AnalyticsRecord[] = [];
+  private readonly storageKey = 'zt_demo_analytics';
+  private readonly limit = 300;
+  private runNumber = 0;
+  private runId = this.createRunId();
+  private records = this.load();
+  private recordedOnce = new Set<string>();
 
-  public get currentRunId(): string {
-    return this.runId;
+  private createRunId(): string {
+    this.runNumber++;
+    return globalThis.crypto?.randomUUID?.() ?? `run-${Date.now()}-${this.runNumber}`;
   }
 
-  track(event: DemoAnalyticsEvent, payload: Partial<AnalyticsRecord> = {}): void {
+  private load(): AnalyticsRecord[] {
+    try {
+      const stored = JSON.parse(localStorage.getItem(this.storageKey) ?? '[]');
+      return Array.isArray(stored) ? stored.slice(-this.limit) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  track(
+    event: DemoAnalyticsEvent,
+    payload: Omit<AnalyticsRecord, 'event' | 'timestamp' | 'runId'> = {},
+  ): AnalyticsRecord | undefined {
+    const onceKey = event === 'stage_clear' ? `${event}-${payload.stage}` : event;
+    if (event.startsWith('first_') || event === 'stage_clear' || event === 'run_end') {
+      if (this.recordedOnce.has(onceKey)) return;
+      this.recordedOnce.add(onceKey);
+    }
     const record: AnalyticsRecord = {
       event,
       timestamp: Date.now(),
@@ -165,22 +190,30 @@ class DemoAnalytics {
       ...payload,
     };
     this.records.push(record);
+    if (this.records.length > this.limit) this.records.shift();
+    this.save();
+    return record;
+  }
+
+  recordPlayback(record: AnalyticsRecord, watchedRelease: boolean, skipped: boolean): void {
+    record.watchedRelease = watchedRelease;
+    record.skipped = skipped;
+    this.save();
+  }
+
+  private save(): void {
     try {
-      const stored = JSON.parse(localStorage.getItem('zt_demo_analytics') || '[]');
-      stored.push(record);
-      // 最多缓存 300 条
-      if (stored.length > 300) stored.shift();
-      localStorage.setItem('zt_demo_analytics', JSON.stringify(stored));
+      localStorage.setItem(this.storageKey, JSON.stringify(this.records));
     } catch {
       // 忽略存储异常
     }
   }
 
-  newRun(isRestartExplicit = true): void {
-    if (isRestartExplicit) {
-      this.track('restart', { endType: 'RESTART', detail: '主动重修一局' });
-    }
-    this.runId = Math.random().toString(36).substring(2, 9);
+  newRun(completed: boolean, highestQi: number): void {
+    if (!completed) this.track('run_end', { endType: 'ABANDONED', highestQi });
+    this.track('restart', { endType: completed ? 'REPLAY' : 'ABANDONED', highestQi });
+    this.runId = this.createRunId();
+    this.recordedOnce.clear();
   }
 
   dump(): AnalyticsRecord[] {

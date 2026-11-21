@@ -217,6 +217,8 @@ export interface SimulationLogEntry {
   spawnedSlots?: number[];
   baseQiDelta?: number;
   multiplierDelta?: number;
+  releaseFactorDelta?: number;
+  ttlDelta?: number;
   critFactor?: number;
   isCrit?: boolean;
 }
@@ -225,6 +227,7 @@ export interface SimulationLogEntry {
 export interface TurnContext {
   realm: number;
   subStage: number;
+  turnIndex: number;
   stageName: string;
   stageThreshold: number;
   effectiveCost: number;

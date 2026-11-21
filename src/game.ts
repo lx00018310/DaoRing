@@ -14,7 +14,7 @@ import {
   getTribulationConfig,
 } from './config';
 import { DEMO_CONFIG, demoSession } from './demoConfig';
-import { runTurn } from './engine';
+import { getEffectiveQiCost, runTurn } from './engine';
 import { getAppliedTalentBonuses } from './karma';
 import type {
   DaoRhyme,
@@ -34,11 +34,7 @@ export function generateUid(prefix = 'dao'): string {
 
 type Rng = () => number;
 
-/** 计算当前全局状态下的实际有效运转真气消耗 */
-export function getEffectiveQiCost(state: GameState): number {
-  if (state.freeTurnsLeft > 0) return 0;
-  return state.nextQiCost;
-}
+export { getEffectiveQiCost };
 
 /** 创建 5 层同心圆阵盘（跨局永久保留） */
 export function createInitialBoard(unlockedCount = 1): RingTrack[] {
@@ -560,13 +556,14 @@ export interface TurnExecutionResult {
 export function executeTurn(
   state: GameState,
   rng: Rng = Math.random,
-  options?: { maxRealm?: number; fixedTribulationId?: string },
+  options?: { maxRealm?: number; fixedTribulationId?: string; awardLoot?: boolean },
 ): TurnExecutionResult {
   // 防御性边界：已结束状态下调用保持绝对幂等
   if (state.isGameOver || state.isVictory) {
     const emptyContext: TurnContext = {
       realm: state.realm,
       subStage: state.subStage,
+      turnIndex: state.turnCountInStage + 1,
       stageName: getStageConfig(state.realm, state.subStage).name,
       stageThreshold: state.stageThreshold,
       effectiveCost: 0,
@@ -592,6 +589,7 @@ export function executeTurn(
   const context: TurnContext = {
     realm: state.realm,
     subStage: state.subStage,
+    turnIndex: state.turnCountInStage + 1,
     stageName: getStageConfig(state.realm, state.subStage).name,
     stageThreshold: state.stageThreshold,
     effectiveCost: getEffectiveQiCost(state),
@@ -608,9 +606,11 @@ export function executeTurn(
 
   if (cleared) {
     // 战利品发放（九霄神雷翻倍）
-    const isDouble = state.activeTribulation?.modifiers.doubleLoot ?? false;
-    lootAwarded = generateLoot(state.realm, undefined, rng, isDouble);
-    state.hand.push(...lootAwarded);
+    if (options?.awardLoot !== false) {
+      const isDouble = state.activeTribulation?.modifiers.doubleLoot ?? false;
+      lootAwarded = generateLoot(state.realm, undefined, rng, isDouble);
+      state.hand.push(...lootAwarded);
+    }
 
     // 破关离开小关时清空当前天劫
     if (state.activeTribulation) {
@@ -678,5 +678,9 @@ export function createDemoInitialGameState(talents: Record<string, number> = {})
 /** 执行 Demo 单轮回合（封顶炼气圆满，不跳转筑基；首局锁定祥云劫） */
 export function executeDemoTurn(state: GameState, rng: Rng = Math.random): TurnExecutionResult {
   const fixedTribId = !demoSession.isFirstClearCompleted ? DEMO_CONFIG.fixedTribulationId : undefined;
-  return executeTurn(state, rng, { maxRealm: 1, fixedTribulationId: fixedTribId });
+  return executeTurn(state, rng, {
+    maxRealm: DEMO_CONFIG.maxRealm,
+    fixedTribulationId: fixedTribId,
+    awardLoot: false,
+  });
 }

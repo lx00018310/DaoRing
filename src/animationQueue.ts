@@ -1,104 +1,90 @@
-// ============================================================
-// 运转演出队列调度器 (Animation & Stage Director) - V3 真实流路与预算控制
-// 职责：
-// 1. 严格基于 executeTurn 的结构化 logs 驱动视觉表现；
-// 2. 真实流路起终点对应，分束独立记录；
-// 3. 严格预算控制（常规上限 3.2s，极端日志自适应压缩与尾段合并）；
-// 4. 终局向心流光精确回溯本回合真实释放阵眼；
-// 5. 绝对隔离的 Session 身份标记与多重取消锁，杜绝重开串局。
-// ============================================================
-
 import { sound } from './audio';
 import { DEMO_CONFIG } from './demoConfig';
 import type { TurnExecutionResult } from './game';
 import type { SimulationLogEntry } from './types';
 
+type PlaybackWait = (ms: number) => Promise<boolean>;
+
 export interface VisualCallbacks {
-  /** 高亮/取消高亮指定阵眼 */
-  setSlotHighlight: (slotIdx: number, level: 'normal' | 'active' | 'amplify' | 'release' | null) => void;
-  /** 高亮特定阵眼间的导引轨道 */
+  setSlotHighlight: (slotIdx: number, level: 'active' | 'amplify' | 'release' | null) => void;
+  spawnPulse?: (pulseId: string, slotIdx: number) => void;
+  movePulse?: (pulseId: string, fromSlot: number, toSlot: number, duration: number) => void;
+  removePulse?: (pulseId: string) => void;
   highlightTrack: (fromSlot: number, toSlot: number) => void;
-  /** 在指定阵眼附近弹出浮动数值提示（+20气、倍率+0.5、分裂等） */
   spawnFloatText: (slotIdx: number, text: string, type: 'amplify' | 'split' | 'crit' | 'release' | 'synergy') => void;
-  /** 更新主爆发大数字展示与尾段合并摘要 */
   updateBurstScore: (score: number, delta: number, isFinal: boolean, summaryText?: string) => void;
-  /** 触发小关突破轻量反馈 (0.8s) */
-  playMinorBreakthrough: () => Promise<void>;
-  /** 触发炼气巅峰终局联合破境演出 (4.5s，仅从真实释放阵眼汇聚向心流光) */
-  playGrandBreakthrough: (isReducedMotion: boolean, releaseSlots: number[]) => Promise<void>;
-  /** 运转全部结束回调（仅在当前局未被取消时触发） */
+  onReleaseShown?: () => void;
+  clearEffects?: () => void;
+  playMinorBreakthrough: (wait: PlaybackWait) => Promise<void>;
+  playGrandBreakthrough: (isReducedMotion: boolean, releaseSlots: number[], wait: PlaybackWait) => Promise<void>;
   onComplete: () => void;
 }
 
+interface Playback {
+  skipped: boolean;
+  cancelled: boolean;
+  interrupt: (() => void) | null;
+}
+
+function visualEvents(logs: SimulationLogEntry[]): SimulationLogEntry[] {
+  const events = logs.filter((entry) =>
+    entry.ringIdx === 0 && (
+      ['MOVE', 'OUTER_LOOP', 'AMPLIFY', 'SYNERGY', 'RELEASE', 'EXPIRE'].includes(entry.action) ||
+      (entry.action === 'CHAIN_SPLIT' && (entry.spawnedPulseIds?.length ?? 0) > 0)
+    ),
+  );
+  if (events.length <= 24) return events;
+
+  // 保留起步与第一次关键效果。长回合仍可看到第一束实际释放及其邻近轨迹。
+  const selected = new Set(events.slice(0, 8));
+  for (const action of ['AMPLIFY', 'CHAIN_SPLIT', 'EXPIRE']) {
+    const first = events.find((entry) => entry.action === action);
+    if (first) selected.add(first);
+  }
+  const releaseIndex = events.findIndex((entry) => entry.action === 'RELEASE');
+  if (releaseIndex >= 0) {
+    const firstRelease = events[releaseIndex];
+    selected.add(firstRelease);
+    const previous = events.slice(0, releaseIndex).filter((entry) => entry.pulseId === firstRelease.pulseId);
+    for (const event of previous.slice(-4)) selected.add(event);
+  }
+  return [...selected].sort((a, b) => a.seq - b.seq);
+}
+
+function eventDuration(entry: SimulationLogEntry): number {
+  const timings = DEMO_CONFIG.timings;
+  if (entry.action === 'MOVE' || entry.action === 'OUTER_LOOP') return timings.stepMove;
+  if (entry.action === 'RELEASE') return timings.releaseBurst;
+  return timings.amplify;
+}
+
 export class AnimationQueueDirector {
-  private isRunning: boolean = false;
-  private isSkipped: boolean = false;
-  private isCancelled: boolean = false;
-  private currentSessionId: number = 0;
-  private activeTimers: Array<ReturnType<typeof setTimeout>> = [];
-  private activeWaitResolvers: Array<() => void> = [];
+  private current: Playback | null = null;
 
   public get running(): boolean {
-    return this.isRunning;
+    return this.current !== null;
   }
 
   public get skipped(): boolean {
-    return this.isSkipped;
+    return this.current?.skipped ?? false;
   }
 
-  public get cancelled(): boolean {
-    return this.isCancelled;
-  }
-
-  /** 安全可取消延时，校验 session 身份 */
-  public wait(ms: number, sessionId: number): Promise<boolean> {
-    if (this.isSkipped || this.isCancelled || this.currentSessionId !== sessionId) {
-      return Promise.resolve(false);
-    }
-    return new Promise((resolve) => {
-      let timer: ReturnType<typeof setTimeout>;
-      const wake = () => {
-        const tIdx = this.activeTimers.indexOf(timer);
-        if (tIdx !== -1) this.activeTimers.splice(tIdx, 1);
-        const rIdx = this.activeWaitResolvers.indexOf(wake);
-        if (rIdx !== -1) this.activeWaitResolvers.splice(rIdx, 1);
-        const valid = !this.isCancelled && this.currentSessionId === sessionId;
-        resolve(valid);
-      };
-
-      timer = setTimeout(wake, ms);
-      this.activeTimers.push(timer);
-      this.activeWaitResolvers.push(wake);
-    });
-  }
-
-  /** 清除所有正在等待的定时器并彻底作废当前局演出 */
   public cancelAll(): void {
-    this.currentSessionId += 1;
-    this.isCancelled = true;
-    this.isRunning = false;
-    this.isSkipped = false;
+    if (!this.current) return;
+    const playback = this.current;
+    this.current = null;
+    playback.cancelled = true;
+    playback.interrupt?.();
     sound.stopAll();
-    this.activeTimers.forEach((t) => clearTimeout(t));
-    this.activeTimers = [];
-    const resolvers = [...this.activeWaitResolvers];
-    this.activeWaitResolvers = [];
-    resolvers.forEach((r) => r());
   }
 
-  /** 玩家点击跳过动画或切后台时收束 */
   public skip(): void {
-    if (!this.isRunning) return;
-    this.isSkipped = true;
+    if (!this.current) return;
+    this.current.skipped = true;
+    this.current.interrupt?.();
     sound.stopAll();
-    this.activeTimers.forEach((t) => clearTimeout(t));
-    this.activeTimers = [];
-    const resolvers = [...this.activeWaitResolvers];
-    this.activeWaitResolvers = [];
-    resolvers.forEach((r) => r());
   }
 
-  /** 执行整轮回合演出 */
   public async playTurn(
     result: TurnExecutionResult,
     isFinaleReady: boolean,
@@ -106,225 +92,154 @@ export class AnimationQueueDirector {
     cb: VisualCallbacks,
   ): Promise<void> {
     this.cancelAll();
-    const sessionId = ++this.currentSessionId;
-    this.isRunning = true;
-    this.isSkipped = false;
-    this.isCancelled = false;
+    const playback: Playback = { skipped: false, cancelled: false, interrupt: null };
+    this.current = playback;
+    const wait: PlaybackWait = (ms) => {
+      if (playback.skipped || playback.cancelled) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          playback.interrupt = null;
+          resolve(true);
+        }, ms);
+        playback.interrupt = () => {
+          clearTimeout(timer);
+          playback.interrupt = null;
+          resolve(false);
+        };
+      });
+    };
 
-    const reducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reducedMotion = typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+    const releases = result.simulation.logs.filter((entry) => entry.action === 'RELEASE');
+    const releaseSlots = [...new Set(releases.filter((entry) => entry.ringIdx === 0).map((entry) => entry.slotIdx))];
+    const timings = DEMO_CONFIG.timings;
+    let scoreShown = false;
 
-    // 统计本轮回合的真实释放槽位集合（去重供向心流光使用）
-    const releaseSlots = Array.from(
-      new Set(
-        result.simulation.logs
-          .filter((l) => l.action === 'RELEASE')
-          .map((l) => l.slotIdx),
-      ),
-    );
+    try {
+      if (reducedMotion && result.simulation.logs.length > 0) {
+        for (const slot of releaseSlots) cb.setSlotHighlight(slot, 'release');
+        if (releaseSlots.length > 0) cb.onReleaseShown?.();
+        cb.updateBurstScore(result.simulation.turnQiGenerated, 0, true);
+        scoreShown = true;
+        await wait(timings.reducedMotionNormalMax);
+      } else if (result.simulation.logs.length > 0) {
+        await this.playNormal(result.simulation.logs, releases, wait, cb);
+      }
 
-    return new Promise<void>((resolve) => {
-      this.executeSequence(result, isFinaleReady, isMinorReady, reducedMotion, releaseSlots, sessionId, cb)
-        .catch(() => {})
-        .finally(() => {
-          if (this.currentSessionId === sessionId) {
-            this.isRunning = false;
-            if (!this.isCancelled) {
-              cb.onComplete();
-            }
-          }
-          resolve();
-        });
-    });
+      if (playback.cancelled) return;
+      cb.clearEffects?.();
+      for (let slot = 0; slot < 4; slot++) cb.setSlotHighlight(slot, null);
+      if (!scoreShown) {
+        const total = result.simulation.turnQiGenerated;
+        cb.updateBurstScore(total, playback.skipped ? total : 0, true);
+      }
+
+      if (!playback.skipped) {
+        if (isFinaleReady) await cb.playGrandBreakthrough(reducedMotion, releaseSlots, wait);
+        else if (isMinorReady) await cb.playMinorBreakthrough(wait);
+      }
+    } finally {
+      if (this.current === playback) {
+        if (playback.skipped) cb.clearEffects?.();
+        // 结算回调需要读取本次播放的跳过状态。
+        try {
+          cb.onComplete();
+        } finally {
+          if (this.current === playback) this.current = null;
+        }
+      }
+    }
   }
 
-  private async executeSequence(
-    result: TurnExecutionResult,
-    isFinaleReady: boolean,
-    isMinorReady: boolean,
-    reducedMotion: boolean,
-    releaseSlots: number[],
-    sessionId: number,
+  private async playNormal(
+    logs: SimulationLogEntry[],
+    releases: SimulationLogEntry[],
+    wait: PlaybackWait,
     cb: VisualCallbacks,
   ): Promise<void> {
-    const logs = result.simulation.logs;
     const timings = DEMO_CONFIG.timings;
+    const events = visualEvents(logs);
+    const displayed = new Set(events);
+    const remainingReleases = releases.filter((entry) => !displayed.has(entry));
+    const tailDuration = remainingReleases.length ? timings.releaseInterval : 0;
+    const unscaled = events.reduce((ms, entry) => ms + eventDuration(entry), 0) + tailDuration;
+    // 聚气计入整段预算，留少量定时器和绘制余量。
+    const scale = Math.min(1, (timings.normalTurnBudgetMax - timings.pulseStart - 80) / Math.max(1, unscaled));
+    let score = 0;
 
-    // 若用户直接跳过、无日志、或低运动模式快速收束
-    if (this.isSkipped || logs.length === 0 || reducedMotion) {
-      await this.finishQuickly(result, isFinaleReady, isMinorReady, reducedMotion, releaseSlots, sessionId, cb);
-      return;
-    }
-
-    // 拍 1：聚气启动 (Slot 0 入气)
     sound.playGather();
+    cb.spawnPulse?.('P0', 0);
     cb.setSlotHighlight(0, 'active');
-    const ok1 = await this.wait(timings.pulseStart, sessionId);
-    if (!ok1 || this.isSkipped) {
-      await this.finishQuickly(result, isFinaleReady, isMinorReady, reducedMotion, releaseSlots, sessionId, cb);
-      return;
-    }
+    if (!await wait(timings.pulseStart)) return;
 
-    // 拍 2 & 3 & 4：沿真实日志推进，实施 3.2s 播放预算保护
-    const startTime = Date.now();
-    const maxBudgetMs = timings.normalTurnBudgetMax; // 3200ms
-    let currentTotalScore = 0;
-    let releasesCounted = 0;
-    const totalReleasesInLog = logs.filter((l) => l.action === 'RELEASE').length;
-
-    for (let i = 0; i < logs.length; i++) {
-      if (this.isSkipped || this.isCancelled || this.currentSessionId !== sessionId) break;
-      const entry: SimulationLogEntry = logs[i];
-
-      // 预算溢出检查：若已消耗较长时间且后续释放较多，启用尾部合并
-      const elapsed = Date.now() - startTime;
-      if (elapsed > maxBudgetMs - 400 && i < logs.length - 1) {
-        // 快速统计剩余释放
-        const remainingLogs = logs.slice(i);
-        const remainingDelta = remainingLogs
-          .filter((l) => l.action === 'RELEASE')
-          .reduce((sum, l) => sum + (l.qiDelta ?? 0), 0);
-        const remainingCount = remainingLogs.filter((l) => l.action === 'RELEASE').length;
-
-        if (remainingCount > 0) {
-          currentTotalScore += remainingDelta;
-          sound.playRelease();
-          cb.updateBurstScore(
-            currentTotalScore,
-            remainingDelta,
-            false,
-            `后续 ${remainingCount} 束合计 +${remainingDelta}`,
-          );
-          await this.wait(timings.releaseInterval, sessionId);
+    for (const entry of events) {
+      const duration = Math.floor(eventDuration(entry) * scale);
+      switch (entry.action) {
+        case 'MOVE':
+        case 'OUTER_LOOP': {
+          const { fromSlot, toSlot } = entry;
+          if (fromSlot === undefined || toSlot === undefined || fromSlot === toSlot) continue;
+          sound.playStep();
+          cb.highlightTrack(fromSlot, toSlot);
+          cb.movePulse?.(entry.pulseId, fromSlot, toSlot, duration);
+          cb.setSlotHighlight(toSlot, 'active');
+          break;
         }
-        break;
-      }
-
-      // 处理移动与巡航（使用真实的起终点槽位）
-      if (entry.action === 'MOVE' || entry.action === 'OUTER_LOOP') {
-        const fromS = entry.fromSlot ?? entry.slotIdx;
-        const toS = entry.toSlot ?? entry.slotIdx;
-        sound.playStep();
-        if (fromS !== toS) {
-          cb.highlightTrack(fromS, toS);
-        }
-        cb.setSlotHighlight(toS, 'active');
-        const ok = await this.wait(timings.stepMove, sessionId);
-        if (!ok) return;
-        continue;
-      }
-
-      // 处理分裂
-      if (entry.action === 'CHAIN_SPLIT') {
-        const spawnedCount = entry.spawnedPulseIds?.length ?? 0;
-        if (spawnedCount > 0) {
+        case 'CHAIN_SPLIT':
           sound.playAmplify(true);
           cb.setSlotHighlight(entry.slotIdx, 'amplify');
-          cb.spawnFloatText(entry.slotIdx, `⚡ 分裂 +${spawnedCount}束`, 'split');
-          const ok = await this.wait(timings.amplify, sessionId);
-          if (!ok) return;
+          entry.spawnedPulseIds?.forEach((pulseId, index) => {
+            const target = entry.spawnedSlots?.[index];
+            if (target !== undefined) cb.spawnPulse?.(pulseId, target);
+          });
+          cb.spawnFloatText(entry.slotIdx, `分裂 +${entry.spawnedPulseIds?.length} 束`, 'split');
+          break;
+        case 'AMPLIFY':
+          sound.playAmplify();
+          cb.setSlotHighlight(entry.slotIdx, 'amplify');
+          if (entry.baseQiDelta !== undefined) {
+            cb.spawnFloatText(entry.slotIdx, `基础气 +${entry.baseQiDelta}`, 'amplify');
+          } else if (entry.isCrit && entry.critFactor !== undefined) {
+            cb.spawnFloatText(entry.slotIdx, `锋芒 暴击 ×${entry.critFactor}`, 'crit');
+          } else if (entry.multiplierDelta !== undefined) {
+            cb.spawnFloatText(entry.slotIdx, `倍率 +${entry.multiplierDelta.toFixed(2)}`, 'amplify');
+          }
+          break;
+        case 'SYNERGY': {
+          const text = entry.releaseFactorDelta !== undefined
+            ? `连携 · 释放系数 +${entry.releaseFactorDelta}`
+            : entry.ttlDelta !== undefined
+              ? `连携 · 剩余步数 +${entry.ttlDelta}`
+              : `连携 · 倍率 +${entry.multiplierDelta ?? 0}`;
+          cb.spawnFloatText(entry.slotIdx, text, 'synergy');
+          break;
         }
-        continue;
-      }
-
-      // 处理增幅 (聚灵/锋芒/周天)
-      if (entry.action === 'AMPLIFY') {
-        sound.playAmplify(false);
-        cb.setSlotHighlight(entry.slotIdx, 'amplify');
-        let floatText = '增幅';
-        if (entry.baseQiDelta !== undefined) {
-          floatText = `聚灵 气+${entry.baseQiDelta}`;
-        } else if (entry.isCrit) {
-          floatText = `锋芒 暴击×${(entry.critFactor ?? 1.5).toFixed(1)}`;
-        } else if (entry.multiplierDelta !== undefined) {
-          floatText = `倍率+${entry.multiplierDelta.toFixed(2)}`;
+        case 'EXPIRE':
+          cb.removePulse?.(entry.pulseId);
+          cb.spawnFloatText(entry.slotIdx, '灵气消散', 'synergy');
+          break;
+        case 'RELEASE': {
+          const delta = entry.qiDelta ?? 0;
+          score += delta;
+          cb.removePulse?.(entry.pulseId);
+          cb.onReleaseShown?.();
+          sound.playRelease();
+          cb.setSlotHighlight(entry.slotIdx, 'release');
+          cb.spawnFloatText(entry.slotIdx, `+${delta}`, 'release');
+          cb.updateBurstScore(score, delta, false);
+          break;
         }
-        cb.spawnFloatText(entry.slotIdx, floatText, entry.isCrit ? 'crit' : 'amplify');
-        const ok = await this.wait(timings.amplify, sessionId);
-        if (!ok) return;
-        continue;
       }
-
-      // 处理道法连携
-      if (entry.action === 'SYNERGY') {
-        sound.playAmplify(false);
-        cb.setSlotHighlight(entry.slotIdx, 'amplify');
-        const text = entry.detail.includes('极尽升华')
-          ? '✨ 极尽升华(系数+0.2)'
-          : entry.detail.includes('聚气生锋')
-            ? '✨ 聚气生锋(倍率+0.3)'
-            : '✨ 虚空借道(TTL+1)';
-        cb.spawnFloatText(entry.slotIdx, text, 'synergy');
-        const ok = await this.wait(timings.amplify, sessionId);
-        if (!ok) return;
-        continue;
-      }
-
-      // 处理释放
-      if (entry.action === 'RELEASE') {
-        const delta = entry.qiDelta ?? 0;
-        currentTotalScore += delta;
-        releasesCounted += 1;
-        sound.playRelease();
-        cb.setSlotHighlight(entry.slotIdx, 'release');
-        cb.spawnFloatText(entry.slotIdx, `💥 +${delta}`, 'release');
-
-        // 多束释放时压缩间隔
-        const burstWait =
-          releasesCounted > 1 && totalReleasesInLog > 2
-            ? timings.releaseInterval
-            : timings.releaseBurst;
-
-        cb.updateBurstScore(currentTotalScore, delta, false);
-        const ok = await this.wait(burstWait, sessionId);
-        if (!ok) return;
-        continue;
-      }
+      if (!await wait(duration)) return;
     }
 
-    // 最终产气数值对齐
-    cb.updateBurstScore(result.simulation.turnQiGenerated, 0, true);
-
-    // 清理高亮
-    for (let s = 0; s < 4; s++) {
-      cb.setSlotHighlight(s, null);
-    }
-
-    if (this.isSkipped || this.isCancelled || this.currentSessionId !== sessionId) {
-      await this.finishQuickly(result, isFinaleReady, isMinorReady, reducedMotion, releaseSlots, sessionId, cb);
-      return;
-    }
-
-    // 拍 5：突破与圆满分镜
-    if (isFinaleReady) {
-      // 炼气巅峰通关：周天贯通 × 破茧化仙 (4.5s 联合演出，只从真实释放阵眼汇聚)
-      await cb.playGrandBreakthrough(reducedMotion, releaseSlots);
-    } else if (isMinorReady) {
-      // 炼气初期/中期小突破：轻量反馈 (0.8s)
-      await cb.playMinorBreakthrough();
-    }
-  }
-
-  private async finishQuickly(
-    result: TurnExecutionResult,
-    isFinaleReady: boolean,
-    isMinorReady: boolean,
-    reducedMotion: boolean,
-    releaseSlots: number[],
-    sessionId: number,
-    cb: VisualCallbacks,
-  ): Promise<void> {
-    if (this.currentSessionId !== sessionId || this.isCancelled) return;
-    cb.updateBurstScore(result.simulation.turnQiGenerated, result.simulation.turnQiGenerated, true);
-    for (let s = 0; s < 4; s++) {
-      cb.setSlotHighlight(s, null);
-    }
-    if (isFinaleReady) {
-      await cb.playGrandBreakthrough(reducedMotion || true, releaseSlots);
-    } else if (isMinorReady) {
-      await cb.playMinorBreakthrough();
+    if (remainingReleases.length > 0) {
+      const delta = remainingReleases.reduce((total, entry) => total + (entry.qiDelta ?? 0), 0);
+      cb.onReleaseShown?.();
+      sound.playRelease();
+      cb.updateBurstScore(score + delta, delta, false, `后续 ${remainingReleases.length} 束合计 +${delta}`);
+      await wait(Math.floor(tailDuration * scale));
     }
   }
 }

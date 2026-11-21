@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { animationDirector } from '../src/animationQueue';
+import { animationDirector, AnimationQueueDirector } from '../src/animationQueue';
 import { createDao } from '../src/config';
-import { demoSession } from '../src/demoConfig';
+import { DEMO_CONFIG, demoSession } from '../src/demoConfig';
 import { simulateBoardTick } from '../src/engine';
 import {
   canRecallDao,
@@ -40,6 +40,7 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
     expect(state.board[1].unlocked).toBe(false);
     // 不会触发灵宝三选一
     expect(res.relicChoices).toBeUndefined();
+    expect(res.lootAwarded).toEqual([]);
   });
 
   it('V3 首局开局仅发 1 聚灵 + 1 灵爆，推荐 Slot1 聚灵 + Slot3 灵爆真实产气 43 顺利突破初期', () => {
@@ -62,6 +63,8 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
     // 真实产气 43（聚灵 30 基础气 * 1.0 倍率 * 1.45 释放连携 = 43）
     expect(res.simulation.turnQiGenerated).toBe(43);
     expect(res.cleared).toBe(true);
+    expect(res.lootAwarded).toEqual([]);
+    expect(state.hand).toEqual([]);
     expect(res.charged).toBe(10); // 初期基础消耗 10
     // 回合前态快照准确记录
     expect(res.context.realm).toBe(1);
@@ -120,6 +123,9 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
     // 空出来的 Slot 1 放入分光，此时盘面：Slot 0 聚灵，Slot 1 分光，Slot 3 灵爆
     const placeBranchRes = placeDao(state, cChain.uid, 0, 1);
     expect(placeBranchRes.success).toBe(true);
+    const middle = executeDemoTurn(state, () => 0.4);
+    expect(middle.simulation.turnQiGenerated).toBe(80);
+    expect(middle.cleared).toBe(true);
   });
 
   it('V3 玄黄祥云劫前两次运转免费，第三次计费 145；神雷前三次应付为 25/87/181', () => {
@@ -314,6 +320,7 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
       context: {
         realm: 1,
         subStage: 1,
+        turnIndex: 1,
         stageName: '炼气初期',
         stageThreshold: 30,
         effectiveCost: 10,
@@ -348,7 +355,7 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
       simulation: {
         turnQiGenerated: 66,
         logs: [
-          { seq: 1, pulseId: 'P0', ringIdx: 0, slotIdx: 0, action: 'MOVE', detail: 'test' },
+          { seq: 1, pulseId: 'P0', ringIdx: 0, slotIdx: 1, fromSlot: 0, toSlot: 1, action: 'MOVE', detail: 'test' },
           { seq: 2, pulseId: 'P0', ringIdx: 0, slotIdx: 1, action: 'AMPLIFY', detail: 'test' },
         ],
         totalSpawned: 1,
@@ -363,6 +370,7 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
       context: {
         realm: 1,
         subStage: 1,
+        turnIndex: 1,
         stageName: '炼气初期',
         stageThreshold: 30,
         effectiveCost: 10,
@@ -372,21 +380,83 @@ describe('炼气篇 Demo V3 核心闭环与系统测试', () => {
     };
 
     const updateBurstScore = vi.fn();
-    const promise = animationDirector.playTurn(dummyResult, false, false, {
-      setSlotHighlight: vi.fn(),
-      highlightTrack: vi.fn(),
-      spawnFloatText: vi.fn(),
-      updateBurstScore,
-      playMinorBreakthrough: vi.fn().mockResolvedValue(undefined),
-      playGrandBreakthrough: vi.fn().mockResolvedValue(undefined),
-      onComplete,
-    });
-
-    // 跳过
-    animationDirector.skip();
-    await promise;
+    const movePulse = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const promise = animationDirector.playTurn(dummyResult, false, false, {
+        setSlotHighlight: vi.fn(),
+        highlightTrack: vi.fn(),
+        spawnFloatText: vi.fn(),
+        movePulse,
+        updateBurstScore,
+        playMinorBreakthrough: vi.fn().mockResolvedValue(undefined),
+        playGrandBreakthrough: vi.fn().mockResolvedValue(undefined),
+        onComplete,
+      });
+      await vi.advanceTimersByTimeAsync(DEMO_CONFIG.timings.pulseStart + 1);
+      expect(movePulse).toHaveBeenCalledTimes(1);
+      animationDirector.skip();
+      await promise;
+    } finally {
+      animationDirector.cancelAll();
+      vi.useRealTimers();
+    }
 
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(updateBurstScore).toHaveBeenCalledWith(66, 66, true);
+  });
+
+  it('逐束回放真实的分裂和移动，保留两次释放与普通锋芒', async () => {
+    const state = createDemoInitialGameState();
+    state.board[0].slots = ['dao_chain', 'dao_gather', 'dao_crit', 'dao_burst']
+      .map((id) => createDao(id, 1, id));
+    const result = executeDemoTurn(state, () => 0.4);
+    const director = new AnimationQueueDirector();
+    const move = vi.fn();
+    const spawn = vi.fn();
+    const score = vi.fn();
+    const float = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const playback = director.playTurn(result, false, false, {
+        setSlotHighlight: vi.fn(), highlightTrack: vi.fn(), spawnPulse: spawn, movePulse: move,
+        spawnFloatText: float, updateBurstScore: score,
+        playMinorBreakthrough: vi.fn(), playGrandBreakthrough: vi.fn(), onComplete: vi.fn(),
+      });
+      await vi.advanceTimersByTimeAsync(DEMO_CONFIG.timings.normalTurnBudgetMax);
+      expect(director.running).toBe(false);
+      await playback;
+      expect(spawn).toHaveBeenCalledWith('P1', 1);
+      expect(move.mock.calls.filter(([, from, to]) => from === 1 && to === 2).map(([id]) => id)).toEqual(['P1', 'P0']);
+      expect(score.mock.calls).toEqual([[78, 78, false], [156, 78, false], [156, 0, true]]);
+      expect(float.mock.calls.some(([, label]) => label.includes('暴击'))).toBe(false);
+    } finally {
+      director.cancelAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it('四分光真实压力回合在包括聚气的预算内结束', async () => {
+    const state = createDemoInitialGameState();
+    state.board[0].slots = Array.from({ length: 4 }, (_, i) => createDao('dao_chain', 1, `split_${i}`));
+    const result = executeDemoTurn(state, () => 0.4);
+    const director = new AnimationQueueDirector();
+    const completed = vi.fn();
+    const score = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const playback = director.playTurn(result, false, false, {
+        setSlotHighlight: vi.fn(), highlightTrack: vi.fn(), spawnFloatText: vi.fn(), updateBurstScore: score,
+        playMinorBreakthrough: vi.fn(), playGrandBreakthrough: vi.fn(), onComplete: completed,
+      });
+      await vi.advanceTimersByTimeAsync(DEMO_CONFIG.timings.normalTurnBudgetMax);
+      expect(completed).toHaveBeenCalledTimes(1);
+      await playback;
+      expect(score).toHaveBeenLastCalledWith(0, 0, true);
+      expect(result.simulation.logs).toHaveLength(7964);
+    } finally {
+      director.cancelAll();
+      vi.useRealTimers();
+    }
   });
 });

@@ -6,8 +6,8 @@
 class SoundManager {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
-  private unlocked: boolean = false;
   private pendingTimers: Array<ReturnType<typeof setTimeout>> = [];
+  private activeNotes = new Set<OscillatorNode>();
 
   constructor() {
     try {
@@ -18,23 +18,20 @@ class SoundManager {
   }
 
   private initCtx(): AudioContext | null {
-    if (!this.ctx && typeof window !== 'undefined') {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
+    try {
+      if (!this.ctx && typeof window !== 'undefined') {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioCtx) this.ctx = new AudioCtx();
       }
+      if (this.ctx?.state === 'suspended') this.ctx.resume().catch(() => {});
+      return this.ctx;
+    } catch {
+      return null;
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
-    return this.ctx;
   }
 
   public unlock(): void {
-    if (!this.unlocked) {
-      this.initCtx();
-      this.unlocked = true;
-    }
+    if (!this.isMuted && this.ctx?.state !== 'running') this.initCtx();
   }
 
   public toggleMute(): boolean {
@@ -54,10 +51,19 @@ class SoundManager {
     return this.isMuted;
   }
 
-  /** 取消所有尚未触发的延迟音效 */
+  /** 取消待播音效并停止当前回合正在播放的音符。 */
   public stopAll(): void {
     this.pendingTimers.forEach((t) => clearTimeout(t));
     this.pendingTimers = [];
+    this.activeNotes.forEach((note) => note.stop());
+    this.activeNotes.clear();
+  }
+
+  private startNote(note: OscillatorNode, stopTime: number): void {
+    note.start();
+    this.activeNotes.add(note);
+    note.onended = () => { this.activeNotes.delete(note); };
+    note.stop(stopTime);
   }
 
   private safeSetTimeout(fn: () => void, delayMs: number): void {
@@ -91,8 +97,7 @@ class SoundManager {
       osc.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start();
-      osc.stop(ctx.currentTime + duration);
+      this.startNote(osc, ctx.currentTime + duration);
     } catch {
       // 容错降级
     }
@@ -148,8 +153,7 @@ class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.75);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.75);
+      this.startNote(osc, ctx.currentTime + 0.75);
     } catch {
       // ignore
     }

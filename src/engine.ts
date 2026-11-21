@@ -150,7 +150,7 @@ export function simulateBoardTick(
         });
       } else if (pulse.lastCategory === 'CONDUCT' && node.category === 'CONDUCT') {
         pulse.ttl += 1;
-        log(pulse, 'SYNERGY', `【道法连携·虚空借道】连续传导，TTL+1→${pulse.ttl}`);
+        log(pulse, 'SYNERGY', `【道法连携·虚空借道】连续传导，TTL+1→${pulse.ttl}`, { ttlDelta: 1 });
       }
 
       switch (cfg.effect) {
@@ -165,7 +165,7 @@ export function simulateBoardTick(
           if (pulse.lastCategory === 'AMPLIFY') {
             factor += 0.2;
             log(pulse, 'SYNERGY', `【道法连携·极尽升华】增幅直入释放，系数+0.2`, {
-              multiplierDelta: 0.2,
+              releaseFactorDelta: 0.2,
             });
           }
           // 天劫释放加成
@@ -406,9 +406,12 @@ export function simulateBoardTick(
   return { turnQiGenerated, logs, totalSpawned, releasedCount, expiredCount };
 }
 
-/**
- * 完整运转（步骤 1 扣费 + 步骤 2~3 仿真 + 步骤 4 结算与免死判定）
- */
+/** 本轮应付真气。免费次数存在时，预告与扣费均为零。 */
+export function getEffectiveQiCost(state: GameState): number {
+  return state.freeTurnsLeft > 0 ? 0 : state.nextQiCost;
+}
+
+/** 完整运转，依次执行费用判定、仿真与结算。 */
 export function runTurn(
   state: GameState,
   rng: Rng = Math.random,
@@ -419,6 +422,7 @@ export function runTurn(
   const relicMods = aggregateRelicModifiers(state.relics);
 
   // 步骤 1：前置检定与扣费
+  const effectiveCost = getEffectiveQiCost(state);
   let charged = 0;
   if (state.freeTurnsLeft > 0) {
     // 天劫赋予的免费运转
@@ -426,7 +430,7 @@ export function runTurn(
     state.freeTurnsLeft -= 1;
   } else {
     // 检查气池是否足够
-    if (state.currentQi < state.nextQiCost) {
+    if (state.currentQi < effectiveCost) {
       // 逆天改命免死判定 (天道生机)
       if (relicMods.hasRebirth && !state.rebirthUsed) {
         state.rebirthUsed = true;
@@ -437,7 +441,7 @@ export function runTurn(
       }
     }
 
-    charged = Math.min(state.currentQi, state.nextQiCost);
+    charged = Math.min(state.currentQi, effectiveCost);
     state.currentQi -= charged;
   }
 
