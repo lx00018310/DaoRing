@@ -200,6 +200,19 @@ button:focus-visible {
   background: rgba(255, 255, 255, 0.12);
 }
 
+a.tool-btn {
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+a.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 10px;
+  text-decoration: none;
+}
+
 /* 中部法阵主舞台 */
 .stage-main {
   flex: 1 0 224px;
@@ -953,6 +966,8 @@ button:focus-visible {
     gap: 6px;
   }
   .hud-tools { grid-column: 2; grid-row: 1; }
+  /* 窄屏保持原有顶栏布局，斗法入口改由通关弹窗提供 */
+  #link-battle { display: none; }
   .hud-stats { grid-column: 1 / -1; justify-content: center; }
   .stat-pill { flex: 1; }
   .stage-stepper { gap: 3px; }

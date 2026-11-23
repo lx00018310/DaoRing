@@ -664,7 +664,8 @@ function showVictory(result: TurnExecutionResult, tally: string): void {
     <h2 class="modal-title" id="modal-title">炼气圆满</h2>
     <p class="modal-desc">周天贯通，灵气入体。<br>${tally} · 破障目标 ${result.context.stageThreshold}</p>
     <div class="modal-score-box"><div class="modal-score-label">本局最高产气</div><div class="modal-score-val">${highestQi}</div></div>
-    <button class="btn btn-primary" id="btn-replay">再修一局 · 随机天劫</button>`);
+    <button class="btn btn-primary" id="btn-replay">再修一局 · 随机天劫</button>
+    <a class="btn btn-secondary" id="link-battle-victory" href="battle.html">进入斗法 · 炼气至化神</a>`);
   byId<HTMLButtonElement>('btn-replay').onclick = resetGame;
 }
 

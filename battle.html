@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DaoRing · 斗法</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/src/battle/battle.css" />
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="cv" width="1600" height="900" aria-label="斗法场景"></canvas>
+
+      <!-- 左上：境界与真气 -->
+      <div id="hud-l" class="hud">
+        <div class="realm"><span>境界</span><b id="realm-txt">炼气期 · 初期</b><span id="trib-tag" class="trib-tag" hidden></span></div>
+        <div class="qirow">
+          <span class="lab">真气</span>
+          <div class="bar"><i id="qi-fill"></i><em id="cost-mark"></em></div>
+          <b id="qi-txt">100</b>
+        </div>
+        <div class="sub"><span id="cost-txt"></span><span id="relics" class="relics"></span></div>
+      </div>
+
+      <!-- 右上：敌人与护体魔光 -->
+      <div id="hud-r" class="hud">
+        <div class="foename" id="foe-txt"></div>
+        <div class="bar red"><i id="foe-fill"></i></div>
+        <div class="sub" id="th-txt"></div>
+      </div>
+
+      <nav id="tools" aria-label="工具">
+        <a class="tool" href="index.html" title="炼气篇教学关" aria-label="返回炼气篇教学关">阵</a>
+        <button type="button" class="tool" id="btn-mute" title="声音开关" aria-label="声音开关" aria-pressed="false">音</button>
+        <button type="button" class="tool" id="btn-book" title="斗法规则" aria-label="斗法规则">鉴</button>
+        <button type="button" class="tool" id="btn-reset" title="重修一世" aria-label="重新开始">重</button>
+      </nav>
+
+      <div id="hint" role="status"></div>
+      <div id="toast" aria-live="polite"></div>
+      <div id="tally"></div>
+      <div id="slots"></div>
+      <div id="menu" hidden></div>
+
+      <div id="tray"><div id="hand"></div></div>
+      <button type="button" id="btn-fuse" class="orb small" aria-label="炼化道韵">炼化</button>
+      <button type="button" id="btn-run" class="orb" aria-label="运转周天">周天<small id="run-cost"></small></button>
+      <button type="button" id="btn-skip" class="skip" hidden>跳过 ›</button>
+
+      <div id="fx" aria-hidden="true"></div>
+      <div id="modal" hidden></div>
+    </div>
+    <script type="module" src="/src/battle/main.ts"></script>
+  </body>
+</html>
