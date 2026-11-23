@@ -43,7 +43,8 @@ const foeArt = Object.fromEntries(
   (Object.keys(FOE_ART_FILES) as FoeArt[]).map((art) => [art, `assets/battle/${FOE_ART_FILES[art]}`]),
 ) as Record<FoeArt, string>;
 const scene = new BattleScene(canvas, $('fx'), {
-  background: 'assets/battle/bg_misty_peaks.jpg',
+  // 炼气在宗门广场，筑基以后转战群山云海
+  backgrounds: ['assets/battle/bg_sect_plaza.jpg', 'assets/battle/bg_misty_peaks.jpg'],
   hero: 'assets/battle/hero_cultivator.webp',
   foes: foeArt,
 }, BOARD.ringSlots);
@@ -593,6 +594,8 @@ async function playTurn(turn: BattleTurn): Promise<void> {
     }
     if (result.newRealmUnlocked) {
       renderSlots();
+      // 突破时天地变换：背景随新境界淡入
+      scene.setBackground(session.state.realm);
       await scene.breakthrough(session.state.realm - 1, REALM_NAMES[session.state.realm - 1] ?? '');
       toast(`阵盘第 ${session.state.realm} 环已解锁 · 能量走满内环一周会自动升环`, 3400);
     }

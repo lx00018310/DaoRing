@@ -48,7 +48,7 @@ src/
     scene.ts                Canvas 渲染与特效
     main.ts                 界面交互与回合编排
     geometry.ts  foes.ts  daoVisual.ts  sfx.ts  battleConfig.ts  battle.css
-public/assets/battle/       背景、主角、五个大境界的敌人立绘
+public/assets/battle/       背景（炼气宗门广场 / 筑基以后群山云海）、主角、五个大境界的敌人立绘
 tests/                      vitest 测试；demo_browser.py 为 Playwright 浏览器回归
 scripts/balance.ts          平衡性模拟脚本
 prototype/battle/           斗法场景的单文件原型（存档）

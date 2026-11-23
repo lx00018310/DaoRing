@@ -27,7 +27,8 @@ const TAU = Math.PI * 2;
 const RING_COUNT = 5;
 
 export interface SceneAssets {
-  background: string;
+  /** 各大境界的背景（下标 0 = 炼气）；缺省时沿用最后一张 */
+  backgrounds: string[];
   hero: string;
   /** 每个大境界的敌人立绘 */
   foes: Record<FoeArt, string>;
@@ -144,7 +145,11 @@ export class BattleScene {
   public readonly reducedMotion: boolean;
 
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly img: { bg: HTMLImageElement; hero: HTMLImageElement; foes: Record<FoeArt, HTMLImageElement> };
+  private readonly img: { bgs: HTMLImageElement[]; hero: HTMLImageElement; foes: Record<FoeArt, HTMLImageElement> };
+  /** 背景切换：当前境界下标、上一张下标与淡入进度（0 → 1） */
+  private bgIndex = 0;
+  private bgPrev = 0;
+  private bgFade = 1;
   private readonly glow = {
     teal: glowSprite('120,255,225'),
     gold: glowSprite('255,205,110'),
@@ -204,7 +209,7 @@ export class BattleScene {
     };
     const foes = {} as Record<FoeArt, HTMLImageElement>;
     (Object.keys(assets.foes) as FoeArt[]).forEach((art) => { foes[art] = load(assets.foes[art]); });
-    this.img = { bg: load(assets.background), hero: load(assets.hero), foes };
+    this.img = { bgs: assets.backgrounds.map(load), hero: load(assets.hero), foes };
     this.slotFx = ringSlots.map((n) => Array.from({ length: n }, () => 0));
     this.reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     for (let i = 0; i < 16; i++) {
@@ -273,6 +278,9 @@ export class BattleScene {
     this.canvas.classList.remove('dead');
     this.tribulationId = null;
     this.ringReveal.splice(0, RING_COUNT, 1, 0, 0, 0, 0);
+    this.bgIndex = 0;
+    this.bgPrev = 0;
+    this.bgFade = 1;
   }
 
   get playing(): boolean {
@@ -464,6 +472,7 @@ export class BattleScene {
 
   enemyEnter(foe: FoeConfig): void {
     this.foe = foe;
+    this.setBackground(foe.realm);
     this.foeDead = false;
     this.foeAlpha = 0;
     const timer = setTimeout(() => {
@@ -478,6 +487,15 @@ export class BattleScene {
       this.splash(foe.name, { x: 1180, y: 600, size: 58, dur: 1.9, tone: 'red' });
     }, 300);
     this.timers.add(timer);
+  }
+
+  /** 按大境界切换背景，跨境界时 1.2 秒淡入 */
+  setBackground(realm: number): void {
+    const idx = Math.max(0, Math.min(this.img.bgs.length - 1, realm - 1));
+    if (idx === this.bgIndex) return;
+    this.bgPrev = this.bgIndex;
+    this.bgIndex = idx;
+    this.bgFade = this.reducedMotion ? 1 : 0;
   }
 
   tribulationOmen(tribId: string, name: string): void {
@@ -765,6 +783,7 @@ export class BattleScene {
     this.heroHit = Math.max(0, this.heroHit - rdt * 2.5);
     this.heroCast = Math.max(0, this.heroCast - rdt * 0.8);
     this.foeKnock *= Math.pow(0.02, rdt);
+    if (this.bgFade < 1) this.bgFade = Math.min(1, this.bgFade + clockDt / 1.2);
     if (!this.foeDead && this.foeAlpha < 1) this.foeAlpha = Math.min(1, this.foeAlpha + clockDt * 1.2);
     for (const ring of this.slotFx) for (let s = 0; s < ring.length; s++) ring[s] = Math.max(0, ring[s] - dt * 1.6);
   }
@@ -945,12 +964,15 @@ export class BattleScene {
 
   private drawBackground(): void {
     const ctx = this.ctx;
-    const bg = this.img.bg;
-    if (ready(bg)) {
+    const paint = (bg: HTMLImageElement | undefined, alpha: number): void => {
+      if (!bg || !ready(bg) || alpha <= 0) return;
       const bw = STAGE_W + 90;
       const bh = Math.max((bw * bg.naturalHeight) / bg.naturalWidth, STAGE_H + 30);
+      ctx.globalAlpha = alpha;
       ctx.drawImage(bg, -45 - this.mouse.x * 30, (STAGE_H - bh) / 2 - this.mouse.y * 16, bw, bh);
-    }
+    };
+    if (this.bgFade < 1) paint(this.img.bgs[this.bgPrev], 1);
+    paint(this.img.bgs[this.bgIndex], this.bgFade < 1 ? this.bgFade : 1);
     const g = ctx.createLinearGradient(0, 0, 0, STAGE_H);
     g.addColorStop(0, 'rgba(6,14,22,.55)');
     g.addColorStop(0.35, 'rgba(6,14,22,.12)');
@@ -1044,6 +1066,25 @@ export class BattleScene {
     const board = this.view.board;
     if (!board.length) return;
     const running = this.playback !== null;
+    // 阵盘投影：在已解锁的环下压一层暗色椭圆，亮色背景（如宗门广场）上阵纹也清楚
+    let outer = 0;
+    board.forEach((ring, r) => { if (ring.unlocked) outer = Math.max(outer, ringRadius(r, this.ringReveal[r])); });
+    if (outer > 0) {
+      const shadowR = outer + 70;
+      ctx.save();
+      ctx.translate(LAYOUT.cx, LAYOUT.cy);
+      ctx.scale(1, LAYOUT.ratio);
+      const g = ctx.createRadialGradient(0, 0, shadowR * 0.2, 0, 0, shadowR);
+      g.addColorStop(0, 'rgba(3,10,14,.62)');
+      g.addColorStop(0.7, 'rgba(3,10,14,.42)');
+      g.addColorStop(1, 'rgba(3,10,14,0)');
+      ctx.fillStyle = g;
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.arc(0, 0, shadowR, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
     // 丹田阵纹
     ctx.save();
     ctx.translate(LAYOUT.cx, LAYOUT.cy);
