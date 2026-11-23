@@ -3,7 +3,7 @@
 // 一切规则都委托给 game.ts / engine.ts：本文件只负责把「一场一场的斗法」
 // 串起来 —— 运转、斩敌、灵宝三选一、炼化、身死道消判定与功德结算。
 // ============================================================
-import { createDao, getStageConfig } from '../config';
+import { createDao, getAllTalents, getStageConfig } from '../config';
 import { aggregateRelicModifiers } from '../engine';
 import {
   createInitialGameState,
@@ -16,7 +16,7 @@ import {
   type CraftResult,
   type TurnExecutionResult,
 } from '../game';
-import { settleRunKarma } from '../karma';
+import { settleRunKarma, upgradeTalent } from '../karma';
 import { loadKarmaProfile, saveKarmaProfile } from '../storage';
 import type { DaoRhyme, GameState, KarmaProfile, RelicConfig, StageConfig } from '../types';
 import { BATTLE_CONFIG } from './battleConfig';
@@ -200,4 +200,36 @@ export function ensureOpeningGather(hand: DaoRhyme[]): void {
   const gather = createDao('dao_gather', 1, generateUid('battle_open'));
   if (idx >= 0) hand[idx] = gather;
   else hand.push(gather);
+}
+
+export interface TalentRow {
+  id: string;
+  name: string;
+  description: string;
+  level: number;
+  maxLevel: number;
+  /** 升下一级所需功德；已满级为 null */
+  nextCost: number | null;
+}
+
+/** 局外天赋一览（按本地功德档案） */
+export function talentRows(profile: KarmaProfile = loadKarmaProfile()): TalentRow[] {
+  return getAllTalents().map((cfg) => {
+    const level = profile.unlockedTalents[cfg.id] ?? 0;
+    return {
+      id: cfg.id,
+      name: cfg.name,
+      description: cfg.description,
+      level,
+      maxLevel: cfg.maxLevel,
+      nextCost: level >= cfg.maxLevel ? null : cfg.costPerLevel[level],
+    };
+  });
+}
+
+/** 用本地档案中的功德升级天赋并保存；下一局开局生效 */
+export function upgradeSavedTalent(talentId: string): { success: boolean; message: string; profile: KarmaProfile } {
+  const result = upgradeTalent(loadKarmaProfile(), talentId);
+  if (result.success) saveKarmaProfile(result.updatedProfile);
+  return { success: result.success, message: result.message, profile: result.updatedProfile };
 }

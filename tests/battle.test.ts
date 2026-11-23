@@ -3,9 +3,10 @@ import { ALL_DAO_IDS, ALL_RELIC_IDS, ALL_TRIBULATION_IDS, BOARD, createDao, getA
 import { simulateBoardTick } from '../src/engine';
 import { createInitialBoard } from '../src/game';
 import type { RingTrack } from '../src/types';
-import { getAllFoes, getFoeConfig } from '../src/battle/foes';
+import { FOE_ART_FILES, getAllFoes, getFoeConfig } from '../src/battle/foes';
 import { LAYOUT, SLOT_HIT, STAGE_H, STAGE_W, slotPoint, type SlotRef } from '../src/battle/geometry';
-import { BattleSession, ensureOpeningGather } from '../src/battle/session';
+import { BattleSession, ensureOpeningGather, talentRows, upgradeSavedTalent } from '../src/battle/session';
+import { createDefaultKarmaProfile, saveKarmaProfile } from '../src/storage';
 import { buildTimeline, pulseStateAt } from '../src/battle/timeline';
 
 /** 可复现的伪随机源 */
@@ -152,12 +153,35 @@ describe('斗法阵盘几何', () => {
   });
 });
 
+describe('斗法关卡数值', () => {
+  it('护体魔光逐关递增，筑基以后的耗气基数约为门槛的 1/4', () => {
+    const stages = getAllStages();
+    for (let i = 1; i < stages.length; i++) expect(stages[i].threshold).toBeGreaterThan(stages[i - 1].threshold);
+    for (const s of stages.filter((x) => x.realm >= 2)) {
+      const ratio = s.baseCost / s.threshold;
+      expect(ratio).toBeGreaterThanOrEqual(0.24);
+      expect(ratio).toBeLessThanOrEqual(0.26);
+    }
+  });
+});
+
 describe('斗法敌人配置', () => {
   it('15 个关卡各有专属敌人，名字不重复', () => {
     const stages = getAllStages();
     expect(getAllFoes()).toHaveLength(stages.length);
     const names = new Set(stages.map((s) => getFoeConfig(s.realm, s.subStage).name));
     expect(names.size).toBe(stages.length);
+  });
+
+  it('每个大境界有专属立绘，且立绘都登记了素材文件', () => {
+    const artByRealm = new Map<number, Set<string>>();
+    for (const foe of getAllFoes()) {
+      expect(FOE_ART_FILES[foe.art]).toBeDefined();
+      artByRealm.set(foe.realm, (artByRealm.get(foe.realm) ?? new Set()).add(foe.art));
+    }
+    expect(artByRealm.size).toBe(5);
+    for (const arts of artByRealm.values()) expect(arts.size).toBe(1);
+    expect(new Set([...artByRealm.values()].map((s) => [...s][0])).size).toBe(5);
   });
 });
 
@@ -265,5 +289,25 @@ describe('斗法会话：一场一场打到化神', () => {
     expect(session.applyFusion(again).success).toBe(true);
     expect(session.state.hand.some((c) => c.configId === 'dao_crit' && c.level === 3)).toBe(true);
     expect(session.state.runStats.daosFused).toBe(2);
+  });
+});
+
+describe('斗法局外天赋', () => {
+  it('功德参悟天赋后写入档案，下一局开局真气与手牌随之增加', () => {
+    saveKarmaProfile({ ...createDefaultKarmaProfile(), totalKarma: 60 });
+    const before = talentRows().find((t) => t.id === 'talent_qi_foundation')!;
+    expect(before.level).toBe(0);
+    expect(before.nextCost).toBe(10);
+    expect(upgradeSavedTalent('talent_qi_foundation').success).toBe(true);
+    expect(upgradeSavedTalent('talent_hand_capacity').success).toBe(true);
+    const out = upgradeSavedTalent('talent_free_fuel');
+    expect(out.success).toBe(false);
+    expect(out.profile.totalKarma).toBe(20);
+    const rows = talentRows();
+    expect(rows.find((t) => t.id === 'talent_qi_foundation')!.level).toBe(1);
+    const session = BattleSession.fromSavedProfile(seeded(5));
+    expect(session.state.currentQi).toBe(BOARD.initialQi + 25);
+    expect(session.state.hand).toHaveLength(BOARD.initialHandSize + 1);
+    saveKarmaProfile(createDefaultKarmaProfile());
   });
 });

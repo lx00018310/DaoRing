@@ -9,8 +9,10 @@ import { moveDao, placeDao, removeDao, type PlacementResult } from '../game';
 import type { DaoRhyme, RelicConfig } from '../types';
 import { CATEGORY_HEX, CATEGORY_LABEL, ROMAN, formatQi, glyphOf, shortName } from './daoVisual';
 import { SLOT_HIT, STAGE_H, STAGE_W, slotPoint, type SlotRef } from './geometry';
+import { FOE_ART_FILES, type FoeArt } from './foes';
 import { BattleScene, categoryOf } from './scene';
-import { BattleSession, type BattleTurn } from './session';
+import { BattleSession, talentRows, upgradeSavedTalent, type BattleTurn } from './session';
+import { loadKarmaProfile } from '../storage';
 import { sfx } from './sfx';
 import { sound } from '../audio';
 
@@ -37,10 +39,13 @@ const btnSkip = $<HTMLButtonElement>('btn-skip');
 
 const REALM_NAMES = BOARD.realmNames.map((name) => `${name}期`);
 
+const foeArt = Object.fromEntries(
+  (Object.keys(FOE_ART_FILES) as FoeArt[]).map((art) => [art, `assets/battle/${FOE_ART_FILES[art]}`]),
+) as Record<FoeArt, string>;
 const scene = new BattleScene(canvas, $('fx'), {
   background: 'assets/battle/bg_misty_peaks.jpg',
   hero: 'assets/battle/hero_cultivator.webp',
-  foe: 'assets/battle/foe_demon_elder.webp',
+  foes: foeArt,
 }, BOARD.ringSlots);
 
 let session = BattleSession.fromSavedProfile();
@@ -448,13 +453,50 @@ function endModal(victory: boolean): void {
     <div><b>${formatQi(st.runStats.highestSingleQi)}</b>最高单次产气</div>
     <div><b>+${settle?.karmaGained ?? 0}</b>功德</div></div>`;
   const m = victory
-    ? openModal(`<div class="ptitle">化 神 大 成</div><div class="psub">连斩十五敌，飞升在即。累计功德 ${settle?.profile.totalKarma ?? 0}</div>${stats}
+    ? openModal(`<div class="ptitle">化 神 大 成</div><div class="psub">连斩 ${st.runStats.stagesCleared} 敌，飞升在即。累计功德 ${settle?.profile.totalKarma ?? 0}</div>${stats}
         <button type="button" class="bigbtn" id="again">再修一世</button>`)
     : openModal(`<div class="ptitle red">道 途 断 绝</div><div class="psub">真气枯竭，走火入魔，陨落于 ${stage.name} —— ${session.foe.name}</div>${stats}
         <button type="button" class="bigbtn" id="again">重入轮回</button>`);
   const again = m.querySelector<HTMLButtonElement>('#again')!;
   again.onclick = newGame;
+  const panel = m.querySelector('.panel')!;
+  const talents = document.createElement('button');
+  talents.type = 'button';
+  talents.className = 'linkbtn';
+  talents.textContent = '参悟天赋';
+  talents.onclick = () => talentModal(() => endModal(victory));
+  panel.append(document.createElement('br'), talents);
   again.focus();
+}
+
+/** 局外天赋：消耗功德永久提升，下一局开局生效 */
+function talentModal(onClose: () => void = closeModal): void {
+  const profile = loadKarmaProfile();
+  const rows = talentRows(profile).map((t) => {
+    const pips = '●'.repeat(t.level) + '○'.repeat(t.maxLevel - t.level);
+    const btn = t.nextCost === null
+      ? '<span class="maxed">已圆满</span>'
+      : `<button type="button" class="talent-up" data-id="${t.id}" ${profile.totalKarma < t.nextCost ? 'disabled' : ''}>参悟 · ${t.nextCost} 功德</button>`;
+    return `<div class="talent-row"><div class="tn"><b>${t.name}</b><span class="pips">${pips}</span></div><div class="td">${t.description}</div>${btn}</div>`;
+  }).join('');
+  const m = openModal(`<div class="ptitle" style="font-size:44px">参悟天赋</div>
+    <div class="psub">现有功德 <b class="karma">${profile.totalKarma}</b> · 历史最高单次产气 ${formatQi(profile.historyHighQi)} · 已修 ${profile.totalRuns} 世，飞升 ${profile.victories} 次<br>天赋永久生效，从下一局开局起算</div>
+    <div class="talents">${rows}</div>
+    <button type="button" class="bigbtn" id="talent-close">合上</button>`);
+  m.querySelectorAll<HTMLButtonElement>('.talent-up').forEach((b) => {
+    b.onclick = () => {
+      const out = upgradeSavedTalent(b.dataset.id ?? '');
+      if (out.success) sfx.win();
+      toast(out.message, 2600);
+      talentModal(onClose);
+    };
+  });
+  const close = m.querySelector<HTMLButtonElement>('#talent-close')!;
+  close.onclick = () => {
+    closeModal();
+    onClose();
+  };
+  (m.querySelector<HTMLButtonElement>('.talent-up:not(:disabled)') ?? close).focus();
 }
 
 function bookModal(): void {
@@ -535,8 +577,8 @@ async function playTurn(turn: BattleTurn): Promise<void> {
   btnSkip.hidden = true;
   setTimeout(() => tallyEl.classList.remove('on'), 900);
   const gain = result.simulation.turnQiGenerated;
-  const core = scene.heroCore();
-  if (gain > 0) scene.floatText(core.x, core.y - 120, `+${formatQi(gain)} 真气`, '#9fffe8', 30, 1.6);
+  // 产气浮字放在掌心上方，避开起手时的扣费浮字
+  if (gain > 0) scene.floatText(hand.x + 70, hand.y - 110, `+${formatQi(gain)} 真气`, '#9fffe8', 30, 1.6);
   // 揭晓本回合真气结算（关卡信息仍保持本场敌人，斩敌后再切换）
   if (hudOverride) hudOverride.qi = session.state.currentQi;
   renderHud();
@@ -645,6 +687,9 @@ btnFuse.onclick = () => {
 btnSkip.onclick = () => scene.skip();
 $('btn-book').onclick = () => {
   if (!busy()) bookModal();
+};
+$('btn-talent').onclick = () => {
+  if (!busy()) talentModal();
 };
 $('btn-reset').onclick = () => {
   if (!playing) newGame();

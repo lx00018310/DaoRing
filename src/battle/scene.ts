@@ -9,7 +9,7 @@ import { getDaoConfig } from '../config';
 import type { DaoCategory, RingTrack } from '../types';
 import { BATTLE_CONFIG } from './battleConfig';
 import { CATEGORY_HEX, CATEGORY_RGB, ROMAN, formatQi, glyphOf } from './daoVisual';
-import type { FoeConfig } from './foes';
+import type { FoeArt, FoeConfig } from './foes';
 import {
   LAYOUT,
   STAGE_H,
@@ -29,7 +29,8 @@ const RING_COUNT = 5;
 export interface SceneAssets {
   background: string;
   hero: string;
-  foe: string;
+  /** 每个大境界的敌人立绘 */
+  foes: Record<FoeArt, string>;
 }
 
 /** UI 每次渲染时推给场景的阵盘视图 */
@@ -67,6 +68,10 @@ interface Playback {
   opts: PlayOptions;
   resolve: () => void;
   trails: Map<string, Point[]>;
+  /** 真实开始时间（毫秒），用于硬上限 */
+  startedAt: number;
+  /** 浮字去重：同一阵眼同类提示在短时间内只显示一次 */
+  lastFloat: Map<string, number>;
 }
 
 interface Particle {
@@ -139,7 +144,7 @@ export class BattleScene {
   public readonly reducedMotion: boolean;
 
   private readonly ctx: CanvasRenderingContext2D;
-  private readonly img: { bg: HTMLImageElement; hero: HTMLImageElement; foe: HTMLImageElement };
+  private readonly img: { bg: HTMLImageElement; hero: HTMLImageElement; foes: Record<FoeArt, HTMLImageElement> };
   private readonly glow = {
     teal: glowSprite('120,255,225'),
     gold: glowSprite('255,205,110'),
@@ -150,7 +155,7 @@ export class BattleScene {
   };
   private readonly smokeSprite = radialSprite(128, 128, [[0, 'rgba(25,6,22,.85)'], [0.5, 'rgba(30,8,26,.35)'], [1, 'rgba(30,8,26,0)']]);
   private readonly fogSprite = radialSprite(256, 128, [[0, 'rgba(205,228,230,.55)'], [0.6, 'rgba(190,215,220,.18)'], [1, 'rgba(190,215,220,0)']]);
-  private foeWhite: HTMLCanvasElement | null = null;
+  private readonly foeWhite = new Map<FoeArt, HTMLCanvasElement>();
   private heroRed: HTMLCanvasElement | null = null;
 
   private time = 0;
@@ -197,7 +202,9 @@ export class BattleScene {
       image.src = src;
       return image;
     };
-    this.img = { bg: load(assets.background), hero: load(assets.hero), foe: load(assets.foe) };
+    const foes = {} as Record<FoeArt, HTMLImageElement>;
+    (Object.keys(assets.foes) as FoeArt[]).forEach((art) => { foes[art] = load(assets.foes[art]); });
+    this.img = { bg: load(assets.background), hero: load(assets.hero), foes };
     this.slotFx = ringSlots.map((n) => Array.from({ length: n }, () => 0));
     this.reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
     for (let i = 0; i < 16; i++) {
@@ -216,14 +223,18 @@ export class BattleScene {
 
   start(): void {
     const loop = (now: number): void => {
-      const rdt = Math.min(0.05, (now - this.last) / 1000 || 0);
+      const real = Math.max(0, (now - this.last) / 1000 || 0);
       this.last = now;
+      // 粒子等物理效果按帧推进（单帧最多 0.05s，防止跳变）；
+      // 回合时间轴与投射物按真实时间推进（单帧最多 0.5s），掉帧的机器上演出也不会被拖长
+      const rdt = Math.min(0.05, real);
+      const clockDt = Math.min(0.5, real);
       let scale = 1;
       if (this.slowmo > 0) {
-        this.slowmo -= rdt;
+        this.slowmo -= clockDt;
         scale = 0.3;
       }
-      this.update(rdt * scale, rdt);
+      this.update(rdt * scale, rdt, clockDt * scale);
       this.render();
       requestAnimationFrame(loop);
     };
@@ -328,10 +339,15 @@ export class BattleScene {
   private foeBox(): { x: number; y: number; w: number; h: number } {
     const scale = this.foe?.scale ?? 1;
     const h = 480 * scale;
-    const ar = ready(this.img.foe) ? this.img.foe.naturalWidth / this.img.foe.naturalHeight : 0.82;
+    const img = this.foeImage();
+    const ar = ready(img) ? img.naturalWidth / img.naturalHeight : 0.82;
     const w = h * ar;
     const bob = this.reducedMotion ? 0 : Math.sin(this.time * 1.3) * 10;
     return { x: 1340 - 0.31 * w + this.foeKnock, y: 320 - 0.44 * h + bob, w, h };
+  }
+
+  private foeImage(): HTMLImageElement {
+    return this.img.foes[this.foe?.art ?? 'elder'] ?? this.img.foes.elder;
   }
 
   foeCore(): Point {
@@ -510,7 +526,7 @@ export class BattleScene {
         clock: 0, next: 0,
         flowEnd: cfg.castLead + (Math.min(timeline.maxT, capBeat) + 1) * step,
         shown: 0, crossed: false, swordsLeft: BATTLE_CONFIG.maxSwordsPerTurn, seenRelease: new Set(),
-        opts, resolve, trails: new Map(),
+        opts, resolve, trails: new Map(), startedAt: performance.now(), lastFloat: new Map(),
       };
     });
   }
@@ -546,9 +562,14 @@ export class BattleScene {
       return;
     }
     if (fx) fx[beat.at.slot] = Math.min(1.6, (fx[beat.at.slot] ?? 0) + 1);
+    // 多股能量同时经过同一阵眼时，同类浮字 0.6 秒内只出一次，避免叠成一团
+    const floatKey = `${beat.at.ring}:${beat.at.slot}:${beat.kind}:${beat.text}`;
+    const lastShown = pb.lastFloat.get(floatKey);
+    const showFloat = beat.big || lastShown === undefined || pb.clock - lastShown > 0.6;
+    if (showFloat) pb.lastFloat.set(floatKey, pb.clock);
     if (beat.kind === 'expire') {
       this.spark(p.x, p.y - 20, 12, this.glow.white, 60, 0.8, 6);
-      this.floatText(p.x, p.y - 56, beat.text, '#aab9b5', 20, 1);
+      if (showFloat) this.floatText(p.x, p.y - 56, beat.text, '#aab9b5', 20, 1);
       return;
     }
     const gold = beat.kind === 'amplify' || beat.kind === 'crit' || beat.kind === 'synergy';
@@ -558,7 +579,7 @@ export class BattleScene {
       this.ringWave(p.x, p.y - 10, gold ? CATEGORY_RGB.AMPLIFY : CATEGORY_RGB.CONDUCT, 120, 0.6);
       this.kick(5);
     }
-    this.floatText(p.x, p.y - 60, beat.text, color, beat.big ? 30 : 22, 1.1);
+    if (showFloat) this.floatText(p.x, p.y - 60 - (beat.kind === 'synergy' ? 22 : 0), beat.text, color, beat.big ? 30 : 22, 1.1);
     const pitch: Record<string, number> = { amplify: 0, crit: 3, split: 5, jump: 7, reverse: 1, synergy: 4, lucky: 6 };
     sfx.chime(pitch[beat.kind] ?? 0);
   }
@@ -625,7 +646,8 @@ export class BattleScene {
     this.splash('斩', { x: 1180, y: 380, size: 260, dur: 1.8 });
     await this.wait(0.26);
     const box = this.foeBox();
-    if (ready(this.img.foe)) this.dissolve(this.img.foe, box, null);
+    const foeImg = this.foeImage();
+    if (ready(foeImg)) this.dissolve(foeImg, box, null);
     this.foeDead = true;
     this.foeAlpha = 0;
     this.flashScreen(0.6, '255,255,255');
@@ -680,10 +702,10 @@ export class BattleScene {
     }
     const fx = this.slotFx[ringIdx];
     if (fx) fx.fill(1.5);
-    const t0 = this.time;
+    const t0 = performance.now();
     await new Promise<void>((resolve) => {
       const tick = (): void => {
-        this.ringReveal[ringIdx] = Math.min(1, (this.time - t0) / 1.4);
+        this.ringReveal[ringIdx] = Math.min(1, (performance.now() - t0) / 1400);
         if (this.ringReveal[ringIdx] >= 1) resolve();
         else requestAnimationFrame(tick);
       };
@@ -706,15 +728,15 @@ export class BattleScene {
 
   // ------------------------------------------------------------ 每帧更新
 
-  private update(dt: number, rdt: number): void {
+  private update(dt: number, rdt: number, clockDt: number): void {
     this.time += dt;
     if (this.beam) {
-      this.beam.t += dt;
+      this.beam.t += clockDt;
       if (this.beam.t > this.beam.dur + 0.3) this.beam = null;
     }
     const pb = this.playback;
     if (pb) {
-      pb.clock += dt;
+      pb.clock += clockDt;
       const lead = BATTLE_CONFIG.timings.castLead;
       while (pb.next < pb.beats.length && lead + pb.beats[pb.next].t * pb.step <= pb.clock) {
         this.fireBeat(pb, pb.beats[pb.next]);
@@ -729,13 +751,13 @@ export class BattleScene {
       }
       if (pb.clock >= pb.flowEnd && (pb.tailFired || pb.tailCount === 0) && this.projectiles.length === 0) {
         this.finishPlayback();
-      } else if (pb.clock > BATTLE_CONFIG.timings.hardLimit) {
+      } else if (pb.clock > BATTLE_CONFIG.timings.hardLimit || (performance.now() - pb.startedAt) / 1000 > BATTLE_CONFIG.timings.hardLimit) {
         this.projectiles.length = 0;
         this.finishPlayback();
       }
     }
-    this.updateProjectiles(dt);
-    this.updateParticles(dt);
+    this.updateProjectiles(clockDt);
+    this.updateParticles(dt, Math.min(0.15, clockDt));
     this.updateAmbient(dt);
     this.shake *= Math.pow(0.04, rdt);
     this.flash = Math.max(0, this.flash - rdt * 1.6);
@@ -743,7 +765,7 @@ export class BattleScene {
     this.heroHit = Math.max(0, this.heroHit - rdt * 2.5);
     this.heroCast = Math.max(0, this.heroCast - rdt * 0.8);
     this.foeKnock *= Math.pow(0.02, rdt);
-    if (!this.foeDead && this.foeAlpha < 1) this.foeAlpha = Math.min(1, this.foeAlpha + dt * 1.2);
+    if (!this.foeDead && this.foeAlpha < 1) this.foeAlpha = Math.min(1, this.foeAlpha + clockDt * 1.2);
     for (const ring of this.slotFx) for (let s = 0; s < ring.length; s++) ring[s] = Math.max(0, ring[s] - dt * 1.6);
   }
 
@@ -781,7 +803,7 @@ export class BattleScene {
     }
   }
 
-  private updateParticles(dt: number): void {
+  private updateParticles(dt: number, slowDt: number): void {
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.life -= dt;
@@ -798,23 +820,24 @@ export class BattleScene {
       if (w.life <= 0) { this.waves.splice(i, 1); continue; }
       w.r += (w.maxR - w.r) * Math.min(1, dt * 6);
     }
+    // 化灰与黑气属于胜负演出，按真实时间推进，掉帧时也会按时散尽
     for (let i = this.ash.length - 1; i >= 0; i--) {
       const a = this.ash[i];
-      if (a.delay > 0) { a.delay -= dt; continue; }
-      a.life -= dt;
+      if (a.delay > 0) { a.delay -= slowDt; continue; }
+      a.life -= slowDt;
       if (a.life <= 0) { this.ash.splice(i, 1); continue; }
-      a.x += a.vx * dt;
-      a.y += a.vy * dt;
-      a.vx += 25 * dt;
-      a.vy -= 10 * dt;
+      a.x += a.vx * slowDt;
+      a.y += a.vy * slowDt;
+      a.vx += 25 * slowDt;
+      a.vy -= 10 * slowDt;
     }
     for (let i = this.smokes.length - 1; i >= 0; i--) {
       const s = this.smokes[i];
-      s.life -= dt;
+      s.life -= slowDt;
       if (s.life <= 0) { this.smokes.splice(i, 1); continue; }
-      s.x += s.vx * dt;
-      s.y += s.vy * dt;
-      s.r += 30 * dt;
+      s.x += s.vx * slowDt;
+      s.y += s.vy * slowDt;
+      s.r += 30 * slowDt;
     }
     for (let i = this.bolts.length - 1; i >= 0; i--) {
       this.bolts[i].life -= dt;
@@ -958,9 +981,14 @@ export class BattleScene {
 
   private drawFoe(): void {
     const ctx = this.ctx;
-    const img = this.img.foe;
+    const img = this.foeImage();
     if (!ready(img)) return;
-    if (!this.foeWhite) this.foeWhite = silhouette(img, '#fff');
+    const art = this.foe?.art ?? 'elder';
+    let white = this.foeWhite.get(art);
+    if (!white) {
+      white = silhouette(img, '#fff');
+      this.foeWhite.set(art, white);
+    }
     const b = this.foeBox();
     ctx.globalCompositeOperation = 'lighter';
     if (!this.foeDead) this.drawGlow(this.glow.red, b.x + b.w * 0.35, b.y + b.h * 0.45, b.h * 0.6, (0.18 + Math.sin(this.time * 2) * 0.05) * this.foeAlpha);
@@ -978,7 +1006,7 @@ export class BattleScene {
       if (this.foeHit > 0) {
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = this.foeHit * 0.75;
-        ctx.drawImage(this.foeWhite, b.x, b.y, b.w, b.h);
+        ctx.drawImage(white, b.x, b.y, b.w, b.h);
         ctx.globalCompositeOperation = 'source-over';
       }
     }
