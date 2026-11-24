@@ -13,7 +13,7 @@
     <div id="stage">
       <!-- 底层：WebGL 实时道韵漩涡着色器 -->
       <canvas id="bg-gl" width="800" height="450" aria-hidden="true"></canvas>
-      <!-- 主舞台：斗法场景渲染 -->
+      <!-- 主舞台：演武巨殿后肩视角斗法场景渲染 -->
       <canvas id="cv" width="1600" height="900" aria-label="斗法场景"></canvas>
       <!-- 电影暗角与细微扫描线质感层 -->
       <div id="crt-overlay" aria-hidden="true"></div>
@@ -68,6 +68,19 @@
       <button type="button" id="btn-fuse" class="orb small" aria-label="炼化道韵">炼化</button>
       <button type="button" id="btn-run" class="orb" aria-label="运转周天">周天<small id="run-cost"></small></button>
       <button type="button" id="btn-skip" class="skip" hidden>跳过 ›</button>
+
+      <!-- 对手发招：21:9 漫画镜头拉近特写层 -->
+      <div id="cutin" hidden aria-hidden="true">
+        <div class="cutin-band">
+          <img id="cutin-img" src="" alt="" draggable="false" />
+          <div class="cutin-speedlines"></div>
+          <div class="cutin-vignette"></div>
+          <div class="cutin-meta">
+            <span id="cutin-foe"></span>
+            <b id="cutin-skill"></b>
+          </div>
+        </div>
+      </div>
 
       <div id="fx" aria-hidden="true"></div>
       <div id="modal" hidden></div>

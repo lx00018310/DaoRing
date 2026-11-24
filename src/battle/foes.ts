@@ -1,5 +1,6 @@
 // ============================================================
-// 斗法场景 · 敌人配置（数据来自 src/data/foes.json，与 stages.json 一一对应）
+// 斗法场景 · 敌人配置（远景立绘 + 21:9 漫画发招特写配置）
+// 数据来自 src/data/foes.json，与 stages.json 一一对应
 // ============================================================
 import foesRaw from '../data/foes.json';
 
@@ -12,6 +13,29 @@ export const FOE_ART_FILES: Record<FoeArt, string> = {
   lord: 'foe_demon_lord.webp',
   bone: 'foe_bone_ancestor.webp',
   god: 'foe_demon_god.webp',
+};
+
+/** 对手发招时切入的 21:9 漫画镜头拉近特写图 */
+export const FOE_CUTIN_FILES: Record<FoeArt, string> = {
+  elder: 'cutin_demon_elder.webp',
+  corpse: 'cutin_corpse_master.webp',
+  lord: 'cutin_demon_lord.webp',
+  bone: 'cutin_bone_ancestor.webp',
+  god: 'cutin_demon_god.webp',
+};
+
+export interface FoeCutInStyle {
+  skill: string;
+  rgb: string;
+  accent: string;
+}
+
+export const FOE_CUTIN_STYLE: Record<FoeArt, FoeCutInStyle> = {
+  elder: { skill: '血魂魔雷', rgb: '255,64,52', accent: '#ff5244' },
+  corpse: { skill: '阴尸噬魂', rgb: '64,255,152', accent: '#4aff9c' },
+  lord: { skill: '赤魇魔焰', rgb: '255,112,48', accent: '#ff7c3a' },
+  bone: { skill: '万骨冥火', rgb: '192,102,255', accent: '#c972ff' },
+  god: { skill: '域外天劫', rgb: '255,212,84', accent: '#ffd85c' },
 };
 
 export interface FoeConfig {

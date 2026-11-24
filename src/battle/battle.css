@@ -847,3 +847,150 @@ html, body {
   .splash span { animation-duration: .9s !important; }
   .card.dao-orb, .orb-ring, .tier-4 .orb-sheen, .tier-5 .orb-sheen, #tally.burning { animation: none !important; }
 }
+
+/* ============================================================
+   对手发招：21:9 漫画镜头拉近特写条（Manga Cut-In Panel）
+   ============================================================ */
+#cutin {
+  --cutin-accent: #ff5244;
+  --cutin-rgb: 255, 64, 52;
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(6, 2, 2, 0);
+  transition: background .22s ease;
+}
+#cutin.show {
+  background: rgba(8, 2, 2, .48);
+}
+#cutin.exit {
+  background: rgba(8, 2, 2, 0);
+}
+
+.cutin-band {
+  position: relative;
+  width: 1640px;
+  height: 336px;
+  margin-top: -40px;
+  overflow: hidden;
+  background: #080404;
+  border-top: 5px solid var(--cutin-accent);
+  border-bottom: 5px solid var(--cutin-accent);
+  box-shadow:
+    0 0 0 3px #050202,
+    0 0 48px rgba(var(--cutin-rgb), .78),
+    0 24px 60px rgba(0, 0, 0, .92);
+  transform: rotate(-2.2deg) translateX(100%) scaleY(.32);
+  opacity: 0;
+  transition:
+    transform .18s cubic-bezier(.16, 1, .3, 1),
+    opacity .14s ease;
+}
+
+#cutin.show .cutin-band {
+  transform: rotate(-2.2deg) translateX(0) scaleY(1);
+  opacity: 1;
+}
+
+#cutin.exit .cutin-band {
+  transform: rotate(-2.2deg) translateX(-100%) scaleY(.45);
+  opacity: 0;
+  transition:
+    transform .20s cubic-bezier(.7, 0, .84, 0),
+    opacity .18s ease;
+}
+
+#cutin-img {
+  position: absolute;
+  inset: -14px;
+  width: calc(100% + 28px);
+  height: calc(100% + 28px);
+  object-fit: cover;
+  object-position: center 36%;
+  transform: scale(1.03);
+}
+
+#cutin.show #cutin-img {
+  animation: cutin-zoom 1.05s cubic-bezier(.16, .85, .32, 1) forwards;
+}
+
+@keyframes cutin-zoom {
+  0%   { transform: scale(1.02) translateX(22px); }
+  100% { transform: scale(1.16) translateX(-14px); }
+}
+
+/* 漫画速度线冲击层 */
+.cutin-speedlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    -8deg,
+    transparent 0px,
+    transparent 16px,
+    rgba(255, 255, 255, .07) 16px,
+    rgba(255, 255, 255, .07) 18px
+  );
+  mix-blend-mode: overlay;
+  animation: cutin-rush .18s linear infinite;
+}
+@keyframes cutin-rush {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-48px); }
+}
+
+.cutin-vignette {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(6, 2, 2, .85) 0%, transparent 24%, transparent 62%, rgba(6, 2, 2, .90) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, .42) 0%, transparent 18%, transparent 82%, rgba(0, 0, 0, .52) 100%);
+}
+
+.cutin-meta {
+  position: absolute;
+  right: 92px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  transform: skewX(-8deg);
+}
+
+#cutin-foe {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: #ffe9c8;
+  padding: 2px 14px;
+  background: rgba(12, 4, 4, .82);
+  border-left: 3px solid var(--cutin-accent);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, .95);
+}
+
+#cutin-skill {
+  font-family: 'Ma Shan Zheng', 'STKaiti', 'KaiTi', serif;
+  font-size: 74px;
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: 8px;
+  color: #fff6dc;
+  text-shadow:
+    0 4px 0 #120404,
+    0 0 22px rgba(var(--cutin-rgb), .95),
+    0 0 46px rgba(var(--cutin-rgb), .65);
+  animation: cutin-text-slam .28s cubic-bezier(.16, 1.35, .32, 1) forwards;
+}
+
+@keyframes cutin-text-slam {
+  0%   { opacity: 0; transform: translateX(80px) scale(1.45); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #cutin.show #cutin-img, .cutin-speedlines, #cutin-skill { animation: none !important; }
+}

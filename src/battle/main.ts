@@ -10,7 +10,7 @@ import type { DaoRhyme, RelicConfig } from '../types';
 import { BalatroBackdrop } from './balatroShader';
 import { CATEGORY_HEX, CATEGORY_LABEL, DAO_ORB_FILES, ROMAN, formatQi, orbArtPath, shortName } from './daoVisual';
 import { SLOT_HIT, STAGE_H, STAGE_W, slotPoint, type SlotRef } from './geometry';
-import { FOE_ART_FILES, type FoeArt } from './foes';
+import { FOE_ART_FILES, FOE_CUTIN_FILES, type FoeArt } from './foes';
 import { attachOrbJuice, popBounce } from './orbJuice';
 import { BattleScene, categoryOf } from './scene';
 import { BattleSession, talentRows, upgradeSavedTalent, type BattleTurn } from './session';
@@ -54,18 +54,21 @@ attachOrbJuice(handEl, '.card');
 const foeArt = Object.fromEntries(
   (Object.keys(FOE_ART_FILES) as FoeArt[]).map((art) => [art, `assets/battle/${FOE_ART_FILES[art]}`]),
 ) as Record<FoeArt, string>;
+const foeCutIns = Object.fromEntries(
+  (Object.keys(FOE_CUTIN_FILES) as FoeArt[]).map((art) => [art, `assets/battle/${FOE_CUTIN_FILES[art]}`]),
+) as Record<FoeArt, string>;
 const daoOrbArt = Object.fromEntries(
   Object.keys(DAO_ORB_FILES).map((id) => [id, orbArtPath(id)]),
 );
 const scene = new BattleScene(canvas, $('fx'), {
-  // 全境界统一套用「方案二：演武巨殿」傍晚火烧云演武场（后续可按境界追加专属图）
+  // 主角原生绘入后肩前景的演武巨殿实景（全境界统一套用），搭配对手 21:9 漫画发招特写
   backgrounds: [
-    'assets/battle/bg_martial_plaza.webp',
+    'assets/battle/bg_martial_plaza_ots.webp',
   ],
-  hero: 'assets/battle/hero_cultivator.webp',
   foes: foeArt,
+  cutins: foeCutIns,
   daos: daoOrbArt,
-}, BOARD.ringSlots);
+}, BOARD.ringSlots, $('cutin'));
 
 let session = BattleSession.fromSavedProfile();
 let action: Action = { mode: 'IDLE' };
@@ -687,7 +690,7 @@ async function playTurn(turn: BattleTurn): Promise<void> {
     ? `护体魔光未破 · 本次产气 <b>${formatQi(gain)}</b> / 需单次 ≥ ${formatQi(stage.threshold)}`
     : '本次周天未能出手 · 阵中需要灵气走得到的<b>释放</b>道韵（灵爆术 / 万剑诀）', 3400);
   await pause(0.5);
-  scene.counterAttack();
+  await scene.counterAttack();
   shownDamage = 0;
   handFrozen = false;
   hudOverride = null;

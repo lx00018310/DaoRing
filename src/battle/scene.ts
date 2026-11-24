@@ -1,18 +1,17 @@
 // ============================================================
-// 斗法场景 · Canvas 渲染与「演武巨殿」主角后肩视角（OTS）空间融合
-// 画面分层（后 → 前）：底层 WebGL 暮色赤霞漩涡 → 演武巨殿傍晚火烧云实景（含对齐石阵）
-// → 蟠龙石柱实时跳动火盆光晕 → 暮色远雾与上升火星余烬
-// → 对手（落地于演武场对侧石台，带透视接触投影、地面火光反射、黑气与受击轮廓光）
-// → 阵盘（与石板圆形阵纹贴合的多环符阵、八卦玉座、悬空道韵灵珠）
-// → 主角（左下角后肩 OTS 近景镜头、反向景深视差、暮色逆光）
-// → 能量束 → 飞剑群 / 灵爆火球 → 粒子、冲击波、顿帧反色闪击 → 近雾 → 浮字 → 暗角。
+// 斗法场景 · Canvas 渲染与「演武巨殿」原生场景融合 + 21:9 漫画特写演出
+// 镜头构图：
+//   1. 主角原生绘入左下后肩前景（bg_martial_plaza_ots.webp），零贴图接缝；
+//   2. 对手按真实透视比例立于演武场远端中心石台，带夕阳逆光长影与接触投影；
+//   3. 主角发招（万剑诀 / 灵爆术）由前景石阵沿纵深射向远处对手，随距离自然透视缩小；
+//   4. 对手反击 / 致命一击先切入 21:9 漫画镜头拉近特写，随即魔焰血雷由远及近扑向前景。
 // 本文件只负责「怎么画」；「发生了什么」全部来自引擎日志构建的 Timeline。
 // ============================================================
 import { getDaoConfig } from '../config';
 import type { DaoCategory, RingTrack } from '../types';
 import { BATTLE_CONFIG } from './battleConfig';
 import { CATEGORY_HEX, CATEGORY_RGB, ROMAN, formatQi, glyphOf } from './daoVisual';
-import type { FoeArt, FoeConfig } from './foes';
+import { FOE_CUTIN_STYLE, type FoeArt, type FoeConfig } from './foes';
 import {
   LAYOUT,
   STAGE_H,
@@ -29,23 +28,25 @@ import { pulseStateAt, type Beat, type MoveKind, type Timeline } from './timelin
 const TAU = Math.PI * 2;
 const RING_COUNT = 5;
 
-/** 演武巨殿（bg_martial_plaza.webp）中 7 处火盆的精确定位与光晕半径 */
+/** 演武巨殿 OTS 视角（bg_martial_plaza_ots.webp）中 6 处可见火盆的精确坐标 */
 const BRAZIERS: readonly { x: number; y: number; r: number; phase: number }[] = [
   { x: 189, y: 451, r: 155, phase: 0.2 },
-  { x: 459, y: 440, r: 90, phase: 1.4 },
-  { x: 664, y: 445, r: 68, phase: 2.6 },
-  { x: 1024, y: 408, r: 64, phase: 3.7 },
-  { x: 1229, y: 442, r: 95, phase: 4.9 },
-  { x: 1405, y: 448, r: 165, phase: 0.9 },
-  { x: 1572, y: 424, r: 110, phase: 2.1 },
+  { x: 665, y: 447, r: 68, phase: 2.6 },
+  { x: 1017, y: 411, r: 66, phase: 3.7 },
+  { x: 1229, y: 443, r: 95, phase: 4.9 },
+  { x: 1405, y: 450, r: 165, phase: 0.9 },
+  { x: 1572, y: 427, r: 112, phase: 2.1 },
 ];
 
 export interface SceneAssets {
   /** 各大境界的背景（下标 0 = 炼气）；缺省时沿用最后一张 */
   backgrounds: string[];
-  hero: string;
-  /** 每个大境界的敌人立绘 */
+  /** 可选独立主角立绘；为空时表示主角已原生绘入背景 OTS 前景中 */
+  hero?: string;
+  /** 每个大境界的远景敌人立绘 */
   foes: Record<FoeArt, string>;
+  /** 每个大境界的 21:9 漫画发招特写图 */
+  cutins?: Record<FoeArt, string>;
   /** 8 种道韵的悬空灵印珠贴图（configId -> 路径） */
   daos?: Record<string, string>;
 }
@@ -99,11 +100,12 @@ interface Smoke { x: number; y: number; vx: number; vy: number; r: number; life:
 interface Bolt { pts: [number, number][]; life: number; max: number; rgb: string; width: number; }
 interface FloatText { x: number; y: number; text: string; color: string; size: number; life: number; max: number; age: number; }
 interface Projectile {
-  kind: 'sword' | 'orb';
+  kind: 'sword' | 'orb' | 'foeOrb';
   x0: number; y0: number; x1: number; y1: number; cx: number; cy: number;
   x: number; y: number; angle: number;
   t: number; dur: number; trail: Point[];
   qi: number; size: number; charge: number;
+  rgb?: string;
 }
 interface Fog { x: number; y: number; s: number; v: number; a: number; near: boolean; }
 interface Ember { x: number; y: number; vx: number; vy: number; r: number; p: number; warm: boolean; }
@@ -161,10 +163,12 @@ export class BattleScene {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly img: {
     bgs: HTMLImageElement[];
-    hero: HTMLImageElement;
+    hero: HTMLImageElement | null;
     foes: Record<FoeArt, HTMLImageElement>;
     daos: Record<string, HTMLImageElement>;
   };
+  private readonly cutinSrcs: Partial<Record<FoeArt, string>>;
+  private readonly cutinLayer: HTMLElement | null;
   private bgIndex = 0;
   private bgPrev = 0;
   private bgFade = 1;
@@ -176,10 +180,10 @@ export class BattleScene {
     orange: glowSprite('255,134,54'),
     amber: glowSprite('255,172,72'),
     violet: glowSprite('196,142,255'),
+    emerald: glowSprite('72,255,164'),
   };
-  private readonly smokeSprite = radialSprite(128, 128, [[0, 'rgba(22,6,14,.86)'], [0.5, 'rgba(32,10,18,.34)'], [1, 'rgba(32,10,18,0)']]);
-  // 暮色火烧云演武场暖雾（替代旧冷青雾）
-  private readonly fogSprite = radialSprite(256, 128, [[0, 'rgba(225,152,108,.30)'], [0.55, 'rgba(140,86,74,.12)'], [1, 'rgba(110,68,62,0)']]);
+  private readonly smokeSprite = radialSprite(128, 128, [[0, 'rgba(22,6,14,.84)'], [0.5, 'rgba(32,10,18,.32)'], [1, 'rgba(32,10,18,0)']]);
+  private readonly fogSprite = radialSprite(256, 128, [[0, 'rgba(225,152,108,.26)'], [0.55, 'rgba(140,86,74,.10)'], [1, 'rgba(110,68,62,0)']]);
   private readonly foeWhite = new Map<FoeArt, HTMLCanvasElement>();
   private readonly foeGold = new Map<FoeArt, HTMLCanvasElement>();
   private heroRed: HTMLCanvasElement | null = null;
@@ -203,7 +207,7 @@ export class BattleScene {
   private foeHit = 0;
   private foeKnock = 0;
   private foeDead = true;
-  private nextAmbientBolt = 1.5;
+  private nextAmbientBolt = 1.8;
   private nextTribBolt = 2;
   private desaturate = false;
   private beam: { t: number; dur: number } | null = null;
@@ -226,8 +230,11 @@ export class BattleScene {
     private readonly fxLayer: HTMLElement,
     assets: SceneAssets,
     ringSlots: readonly number[],
+    cutinLayer: HTMLElement | null = null,
   ) {
     this.ctx = canvas.getContext('2d')!;
+    this.cutinLayer = cutinLayer;
+    this.cutinSrcs = assets.cutins ?? {};
     const load = (src: string): HTMLImageElement => {
       const image = new Image();
       image.src = src;
@@ -235,25 +242,31 @@ export class BattleScene {
     };
     const foes = {} as Record<FoeArt, HTMLImageElement>;
     (Object.keys(assets.foes) as FoeArt[]).forEach((art) => { foes[art] = load(assets.foes[art]); });
+    // 预加载 21:9 漫画特写图，发招瞬间零延迟切入
+    Object.values(this.cutinSrcs).forEach((src) => { if (src) load(src); });
     const daos: Record<string, HTMLImageElement> = {};
     if (assets.daos) {
       Object.entries(assets.daos).forEach(([id, src]) => { daos[id] = load(src); });
     }
-    this.img = { bgs: assets.backgrounds.map(load), hero: load(assets.hero), foes, daos };
+    this.img = {
+      bgs: assets.backgrounds.map(load),
+      hero: assets.hero ? load(assets.hero) : null,
+      foes,
+      daos,
+    };
     this.slotFx = ringSlots.map((n) => Array.from({ length: n }, () => 0));
     this.reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
-    for (let i = 0; i < 14; i++) {
-      this.fogs.push({ x: Math.random() * 1800 - 100, y: 460 + Math.random() * 340, s: 1.5 + Math.random() * 2.2, v: 5 + Math.random() * 12, a: 0.16 + Math.random() * 0.20, near: i < 4 });
+    for (let i = 0; i < 12; i++) {
+      this.fogs.push({ x: Math.random() * 1800 - 100, y: 460 + Math.random() * 340, s: 1.5 + Math.random() * 2.2, v: 5 + Math.random() * 12, a: 0.14 + Math.random() * 0.18, near: i < 4 });
     }
-    // 火盆火星余烬 + 少量飘散灵尘，统一演武场暮色空间感
-    for (let i = 0; i < (this.reducedMotion ? 18 : 64); i++) {
-      const warm = i < 52;
+    for (let i = 0; i < (this.reducedMotion ? 16 : 60); i++) {
+      const warm = i < 48;
       this.embers.push({
         x: Math.random() * STAGE_W,
         y: Math.random() * STAGE_H,
         vx: warm ? (10 + Math.random() * 24) : (Math.random() - 0.5) * 10,
         vy: warm ? (16 + Math.random() * 38) : (8 + Math.random() * 16),
-        r: warm ? (2.2 + Math.random() * 4.5) : (3 + Math.random() * 5),
+        r: warm ? (2.2 + Math.random() * 4.2) : (2.8 + Math.random() * 4.5),
         p: Math.random() * TAU,
         warm,
       });
@@ -304,6 +317,7 @@ export class BattleScene {
       this.playback = null;
       pb.resolve();
     }
+    this.hideCutIn();
     this.particles.length = 0;
     this.waves.length = 0;
     this.ash.length = 0;
@@ -367,13 +381,13 @@ export class BattleScene {
     this.timers.add(timer);
   }
 
-  // ------------------------------------------------------------ 空间几何（后肩 OTS 景深构图）
+  // ------------------------------------------------------------ 空间几何（原生后肩 OTS + 远景对手落地）
 
-  /** 背景视差偏移：同时带动背景、火盆与中远景对手，保证落地不漂移 */
+  /** 轻微全景视差：同步带动背景、主角、火盆与远景对手，保证绝无相对滑移 */
   private bgParallax(): Point {
     return {
-      x: 22 - this.mouse.x * 22,
-      y: -14 - this.mouse.y * 10,
+      x: -this.mouse.x * 16,
+      y: -this.mouse.y * 8,
     };
   }
 
@@ -400,46 +414,36 @@ export class BattleScene {
     return { x: LAYOUT.cx + r * Math.cos(a), y: LAYOUT.cy + r * LAYOUT.ratio * Math.sin(a) - 18 - hop };
   }
 
-  /**
-   * 主角：左下角后肩（Over-The-Shoulder）前景视角
-   * 与背景呈反向视差，打造镜头位于主角左后肩望向演武场的立体景深。
-   */
-  private heroBox(): { x: number; y: number; w: number; h: number } {
-    const h = 580;
-    const ar = ready(this.img.hero) ? this.img.hero.naturalWidth / this.img.hero.naturalHeight : 1;
-    const w = h * ar;
-    const fgX = this.reducedMotion ? 0 : this.mouse.x * 16;
-    const fgY = this.reducedMotion ? 0 : this.mouse.y * 8;
-    return { x: -85 + fgX, y: STAGE_H - h + 76 + fgY, w, h };
-  }
-
+  /** 主角施法点（位于背景原生后肩主角右肩前沿，向前注入石阵第一眼） */
   heroHand(): Point {
-    const b = this.heroBox();
-    return { x: b.x + 0.79 * b.w, y: b.y + 0.22 * b.h };
+    const par = this.bgParallax();
+    return { x: 472 + par.x, y: 618 + par.y };
   }
 
+  /** 主角中心受击点（用于敌人反击雷焰扑击落点与浮字） */
   heroCore(): Point {
-    const b = this.heroBox();
-    return { x: b.x + 0.50 * b.w, y: b.y + 0.42 * b.h };
+    const par = this.bgParallax();
+    return { x: 345 + par.x, y: 610 + par.y };
   }
 
-  /** 对手双脚在演武场对侧石面上的锚点（随背景视差同步移动，彻底杜绝飘浮割裂） */
+  /** 对手双脚在演武场远端中心石台上的精确锚点（随背景同步，零漂移） */
   private foeFoot(): Point {
-    const bg = this.bgParallax();
+    const par = this.bgParallax();
     return {
-      x: 1168 + bg.x * 0.85 + this.foeKnock,
-      y: 522 + bg.y * 0.85,
+      x: 855 + par.x + this.foeKnock * 0.45,
+      y: 506 + par.y,
     };
   }
 
+  /** 远景对手透视包围盒：按真实距离缩放（约 132–182px），真正立于远端演武场中心 */
   private foeBox(): { x: number; y: number; w: number; h: number } {
     const scale = this.foe?.scale ?? 1;
-    const h = 390 * scale;
+    const h = 162 * scale;
     const img = this.foeImage();
     const ar = ready(img) ? img.naturalWidth / img.naturalHeight : 0.82;
     const w = h * ar;
     const foot = this.foeFoot();
-    const breathe = this.reducedMotion ? 0 : Math.sin(this.time * 1.4) * 3.5;
+    const breathe = this.reducedMotion ? 0 : Math.sin(this.time * 1.6) * 1.8;
     return { x: foot.x - 0.44 * w, y: foot.y - 0.94 * h + breathe, w, h };
   }
 
@@ -449,7 +453,63 @@ export class BattleScene {
 
   foeCore(): Point {
     const b = this.foeBox();
-    return { x: b.x + 0.40 * b.w, y: b.y + 0.44 * b.h };
+    return { x: b.x + 0.44 * b.w, y: b.y + 0.46 * b.h };
+  }
+
+  private foeGlowSprite(): HTMLCanvasElement {
+    switch (this.foe?.art) {
+      case 'corpse': return this.glow.emerald;
+      case 'lord': return this.glow.orange;
+      case 'bone': return this.glow.violet;
+      case 'god': return this.glow.gold;
+      default: return this.glow.red;
+    }
+  }
+
+  // ------------------------------------------------------------ 21:9 漫画镜头拉近特写
+
+  private hideCutIn(): void {
+    if (!this.cutinLayer) return;
+    this.cutinLayer.classList.remove('show', 'exit');
+    this.cutinLayer.hidden = true;
+  }
+
+  private async playCutIn(fatal = false): Promise<void> {
+    const layer = this.cutinLayer;
+    const art = this.foe?.art ?? 'elder';
+    const src = this.cutinSrcs[art];
+    if (!layer || !src) return;
+
+    const style = FOE_CUTIN_STYLE[art];
+    const imgEl = layer.querySelector<HTMLImageElement>('#cutin-img');
+    const foeEl = layer.querySelector<HTMLElement>('#cutin-foe');
+    const skillEl = layer.querySelector<HTMLElement>('#cutin-skill');
+
+    if (imgEl) {
+      imgEl.src = src;
+      const hue = this.foe?.hue ?? 0;
+      imgEl.style.filter = hue ? `hue-rotate(${Math.round(hue * 0.35)}deg) saturate(1.12)` : '';
+    }
+    if (foeEl) foeEl.textContent = this.foe?.name ?? '';
+    if (skillEl) skillEl.textContent = fatal ? `绝杀 · ${style.skill}` : style.skill;
+    layer.style.setProperty('--cutin-accent', style.accent);
+    layer.style.setProperty('--cutin-rgb', style.rgb);
+
+    layer.classList.remove('show', 'exit');
+    layer.hidden = false;
+    void layer.offsetWidth;
+    layer.classList.add('show');
+
+    sfx.whoosh();
+    this.kick(fatal ? 14 : 9);
+    this.flashScreen(0.24, style.rgb);
+
+    const hold = this.reducedMotion ? 0.55 : (fatal ? 1.05 : 0.88);
+    await this.wait(hold);
+
+    layer.classList.add('exit');
+    await this.wait(this.reducedMotion ? 0.12 : 0.22);
+    this.hideCutIn();
   }
 
   // ------------------------------------------------------------ 特效原语
@@ -471,7 +531,7 @@ export class BattleScene {
     this.floats.push({ x, y, text, color, size, life, max: life, age: 0 });
   }
 
-  private bolt(x1: number, y1: number, x2: number, y2: number, rgb = '255,70,60', life = 0.2, width = 3): void {
+  private bolt(x1: number, y1: number, x2: number, y2: number, rgb = '255,70,60', life = 0.22, width = 3): void {
     let pts: [number, number][] = [[x1, y1], [x2, y2]];
     let disp = Math.hypot(x2 - x1, y2 - y1) * 0.22;
     for (let it = 0; it < 6; it++) {
@@ -498,7 +558,7 @@ export class BattleScene {
   }
 
   private dissolve(img: HTMLImageElement, box: { x: number; y: number; w: number; h: number }, tint: string | null): void {
-    const step = 7;
+    const step = 4;
     try {
       const c = canvasOf(Math.max(1, box.w | 0), Math.max(1, box.h | 0));
       const x = c.getContext('2d')!;
@@ -509,16 +569,16 @@ export class BattleScene {
           const i = (yy * c.width + xx) * 4;
           if (data[i + 3] < 120) continue;
           this.ash.push({
-            x: box.x + xx, y: box.y + yy, vx: (Math.random() - 0.3) * 45, vy: -24 - Math.random() * 68,
-            life: 0.8 + Math.random() * 1.8 + ((c.height - yy) / c.height) * 0.6, max: 2.6,
-            color: tint ?? `rgb(${data[i]},${data[i + 1]},${data[i + 2]})`, size: step - 1,
-            delay: Math.random() * 0.5 + (xx / c.width) * 0.4,
+            x: box.x + xx, y: box.y + yy, vx: (Math.random() - 0.35) * 35, vy: -20 - Math.random() * 55,
+            life: 0.7 + Math.random() * 1.5 + ((c.height - yy) / c.height) * 0.5, max: 2.2,
+            color: tint ?? `rgb(${data[i]},${data[i + 1]},${data[i + 2]})`, size: step,
+            delay: Math.random() * 0.4 + (xx / c.width) * 0.3,
           });
         }
       }
     } catch {
-      for (let i = 0; i < 900; i++) {
-        this.ash.push({ x: box.x + Math.random() * box.w, y: box.y + Math.random() * box.h, vx: (Math.random() - 0.3) * 40, vy: -20 - Math.random() * 60, life: 1 + Math.random() * 1.6, max: 2.6, color: tint ?? '#552', size: 5, delay: Math.random() * 0.6 });
+      for (let i = 0; i < 450; i++) {
+        this.ash.push({ x: box.x + Math.random() * box.w, y: box.y + Math.random() * box.h, vx: (Math.random() - 0.3) * 35, vy: -18 - Math.random() * 50, life: 0.9 + Math.random() * 1.4, max: 2.3, color: tint ?? '#632', size: 4, delay: Math.random() * 0.4 });
       }
     }
   }
@@ -568,13 +628,15 @@ export class BattleScene {
       this.timers.delete(timer);
       const fc = this.foeCore();
       const foot = this.foeFoot();
-      for (let i = 0; i < 38; i++) {
-        this.smokes.push({ x: foot.x + (Math.random() - 0.5) * 180, y: foot.y - Math.random() * 240, vx: (Math.random() - 0.5) * 55, vy: -18 - Math.random() * 28, r: 36 + Math.random() * 52, life: 1.5, max: 1.5 });
+      const style = FOE_CUTIN_STYLE[foe.art];
+      for (let i = 0; i < 26; i++) {
+        this.smokes.push({ x: foot.x + (Math.random() - 0.5) * 90, y: foot.y - Math.random() * 140, vx: (Math.random() - 0.5) * 40, vy: -14 - Math.random() * 22, r: 22 + Math.random() * 34, life: 1.4, max: 1.4 });
       }
-      this.bolt(fc.x + 15, -20, fc.x, fc.y - 80, '255,80,55', 0.3, 4);
+      this.bolt(fc.x + 8, -20, fc.x, fc.y - 30, style.rgb, 0.28, 3);
+      this.ringWave(foot.x, foot.y, style.rgb, 145, 0.65);
       sfx.thunder();
-      this.flashScreen(0.22, '255,80,45');
-      this.splash(foe.name, { x: 1150, y: 565, size: 54, dur: 1.9, tone: 'red' });
+      this.flashScreen(0.18, style.rgb);
+      this.splash(foe.name, { x: 855, y: 310, size: 52, dur: 1.9, tone: 'red' });
     }, 300);
     this.timers.add(timer);
   }
@@ -590,7 +652,7 @@ export class BattleScene {
   tribulationOmen(tribId: string, name: string): void {
     this.tribulationId = tribId;
     const tone = tribId === 'trib_cloud' ? 'gold' : tribId === 'trib_demon' ? 'red' : 'teal';
-    this.splash(name, { x: 800, y: 300, size: 96, dur: 2.4, tone });
+    this.splash(name, { x: 800, y: 290, size: 96, dur: 2.4, tone });
     if (tribId === 'trib_thunder') {
       for (let i = 0; i < 3; i++) this.bolt(300 + Math.random() * 1000, -20, 300 + Math.random() * 1000, 300 + Math.random() * 300, '200,170,255', 0.35, 5);
       sfx.thunder();
@@ -618,7 +680,7 @@ export class BattleScene {
     const beats = timeline.beats.filter((b) => b.t <= capBeat);
     const tail = timeline.beats.filter((b) => b.t > capBeat && b.kind === 'release');
     this.heroCast = 1;
-    this.targetZoom = this.reducedMotion ? 1 : 1.032;
+    this.targetZoom = this.reducedMotion ? 1 : 1.035;
     this.beam = { t: 0, dur: 0.75 };
     const hand = this.heroHand();
     this.spark(hand.x, hand.y, 28, this.glow.teal, 175, 0.8, 10);
@@ -680,7 +742,7 @@ export class BattleScene {
 
     if (beat.kind === 'release') {
       if (fx) fx[beat.at.slot] = 1.9;
-      this.fireRelease(pb, beat, { x: p.x, y: p.y - 30 });
+      this.fireRelease(pb, beat, { x: p.x, y: p.y - 26 });
       return;
     }
     if (fx) fx[beat.at.slot] = Math.min(1.7, (fx[beat.at.slot] ?? 0) + 1.1);
@@ -710,14 +772,14 @@ export class BattleScene {
   private fireRelease(pb: Playback, beat: Beat, src: Point): void {
     const qi = beat.qi ?? 0;
     const isSword = beat.releaseName?.includes('剑') ?? false;
-    this.ringWave(src.x, src.y + 20, '255,150,90', 170, 0.55);
-    this.spark(src.x, src.y, 34, this.glow.orange, 280, 0.72, 13);
+    this.ringWave(src.x, src.y + 18, '255,150,90', 165, 0.55);
+    this.spark(src.x, src.y, 32, this.glow.orange, 260, 0.72, 13);
     this.kick(5);
     pb.opts.onEnergy?.(1.25);
     const name = beat.releaseName ?? '';
     if (!pb.seenRelease.has(name)) {
       pb.seenRelease.add(name);
-      this.splash(isSword ? '万剑诀' : '灵爆术', { x: 960, y: 450, size: 110, dur: 1.4 });
+      this.splash(isSword ? '万剑诀' : '灵爆术', { x: 855, y: 310, size: 104, dur: 1.35 });
     }
     const fc = this.foeCore();
     const share = qi / Math.max(1, pb.opts.threshold);
@@ -726,20 +788,36 @@ export class BattleScene {
       pb.swordsLeft -= n;
       sfx.sword();
       for (let i = 0; i < n; i++) {
-        const tx = fc.x + (Math.random() - 0.5) * 100;
-        const ty = fc.y + (Math.random() - 0.5) * 130;
+        // 飞剑群从石阵弧线纵深齐射向远端对手
+        const tx = fc.x + (Math.random() - 0.5) * 68;
+        const ty = fc.y + (Math.random() - 0.5) * 90;
+        const spreadX = (Math.random() - 0.5) * 280;
         this.projectiles.push({
-          kind: 'sword', x0: src.x + (Math.random() - 0.5) * 60, y0: src.y - Math.random() * 50, x1: tx, y1: ty,
-          cx: (src.x + tx) / 2 + (Math.random() - 0.5) * 200, cy: Math.min(src.y, ty) - 110 - Math.random() * 180,
-          x: src.x, y: src.y, angle: 0, t: -i * 0.045 - 0.1, dur: 0.48 + Math.random() * 0.2, trail: [],
+          kind: 'sword',
+          x0: src.x + (Math.random() - 0.5) * 55,
+          y0: src.y - Math.random() * 45,
+          x1: tx,
+          y1: ty,
+          cx: (src.x + tx) / 2 + spreadX,
+          cy: Math.min(src.y, ty) - 110 - Math.random() * 145,
+          x: src.x, y: src.y, angle: 0,
+          t: -i * 0.042 - 0.08,
+          dur: 0.46 + Math.random() * 0.18,
+          trail: [],
           qi: i === 0 ? qi : 0, size: 0, charge: 0,
         });
       }
     } else {
       this.projectiles.push({
-        kind: 'orb', x0: src.x, y0: src.y, x1: fc.x, y1: fc.y, cx: (src.x + fc.x) / 2, cy: Math.min(src.y, fc.y) - 150,
-        x: src.x, y: src.y, angle: 0, t: -0.28, dur: BATTLE_CONFIG.timings.projectileFlight, trail: [],
-        qi, size: 24 + Math.min(46, Math.sqrt(Math.max(0, share)) * 36), charge: 0,
+        kind: 'orb',
+        x0: src.x, y0: src.y, x1: fc.x, y1: fc.y,
+        cx: (src.x + fc.x) / 2 + (src.x < fc.x ? -50 : 50),
+        cy: Math.min(src.y, fc.y) - 140,
+        x: src.x, y: src.y, angle: 0,
+        t: -0.26,
+        dur: BATTLE_CONFIG.timings.projectileFlight,
+        trail: [],
+        qi, size: 26 + Math.min(44, Math.sqrt(Math.max(0, share)) * 34), charge: 0,
       });
       sfx.whoosh();
     }
@@ -748,11 +826,11 @@ export class BattleScene {
   private applyHit(pb: Playback, qi: number): void {
     pb.shown += qi;
     const fc = this.foeCore();
-    this.floatText(fc.x - 40 + (Math.random() - 0.5) * 70, fc.y - 70 - Math.random() * 35, `-${formatQi(qi)}`, '#ffe288', 64, 1.55);
+    this.floatText(fc.x + (Math.random() - 0.5) * 60, fc.y - 60 - Math.random() * 30, `-${formatQi(qi)}`, '#ffe288', 58, 1.55);
     this.foeHit = 1;
     this.rimFlash = 1;
-    this.foeKnock = 26;
-    this.kick(12);
+    this.foeKnock = 14;
+    this.kick(11);
     sfx.hit();
     pb.opts.onHit(pb.shown);
     if (!pb.crossed && pb.shown >= pb.opts.threshold) {
@@ -765,16 +843,16 @@ export class BattleScene {
       this.triggerChroma();
       this.flashScreen(0.75, '255,242,204');
       sfx.boom();
-      this.ringWave(fc.x, fc.y, '255,230,150', 440, 0.92);
-      this.spark(fc.x, fc.y, 100, this.glow.gold, 540, 1.15, 18);
+      this.ringWave(fc.x, fc.y + 35, '255,230,150', 360, 0.92);
+      this.spark(fc.x, fc.y, 95, this.glow.gold, 460, 1.15, 16);
     }
   }
 
-  // ------------------------------------------------------------ 胜负演出
+  // ------------------------------------------------------------ 胜负演出与漫画特写反击
 
   async foeDefeated(): Promise<void> {
     const fc = this.foeCore();
-    this.splash('斩', { x: fc.x, y: fc.y - 20, size: 260, dur: 1.8 });
+    this.splash('斩', { x: fc.x, y: fc.y - 35, size: 240, dur: 1.8 });
     this.triggerChroma();
     if (!this.reducedMotion) this.impactFrame = 0.09;
     await this.wait(0.24);
@@ -786,38 +864,81 @@ export class BattleScene {
     this.flashScreen(0.65, '255,255,255');
     sfx.boom();
     this.kick(24);
-    this.ringWave(fc.x, fc.y, '255,90,60', 520, 1.25);
+    this.ringWave(fc.x, fc.y + 35, '255,90,60', 440, 1.25);
     await this.wait(1.6);
   }
 
-  counterAttack(): void {
+  /** 对手反击：先切入 21:9 漫画镜头拉近特写，再从远处演武场放出由小变大扑向前景主角的魔焰血雷 */
+  async counterAttack(): Promise<void> {
+    const art = this.foe?.art ?? 'elder';
+    const style = FOE_CUTIN_STYLE[art];
+
+    // 1. 漫画镜头拉近特写
+    await this.playCutIn(false);
+
+    // 2. 切回演武场：魔焰/雷球从远处对手高速扑向前景主角（透视由小变大）
     const fc = this.foeCore();
     const h = this.heroCore();
-    this.bolt(fc.x - 30, fc.y - 30, h.x + 50, h.y - 70, '255,60,60', 0.35, 4);
-    this.bolt(fc.x - 20, fc.y - 10, h.x + 70, h.y - 30, '255,90,80', 0.3, 2);
+    this.projectiles.push({
+      kind: 'foeOrb',
+      x0: fc.x, y0: fc.y,
+      x1: h.x + 20, y1: h.y - 10,
+      cx: (fc.x + h.x) / 2,
+      cy: fc.y - 60,
+      x: fc.x, y: fc.y, angle: 0,
+      t: 0, dur: 0.34, trail: [],
+      qi: 0, size: 22, charge: 1,
+      rgb: style.rgb,
+    });
+    this.bolt(fc.x, fc.y - 10, h.x + 30, h.y - 40, style.rgb, 0.32, 4);
+    sfx.whoosh();
+
+    await this.wait(0.32);
+
+    this.bolt(fc.x, fc.y, h.x + 60, h.y + 10, style.rgb, 0.28, 3);
     this.heroHit = 1;
     this.kick(16);
     this.triggerChroma();
-    this.flashScreen(0.28, '255,40,30');
+    this.flashScreen(0.30, style.rgb);
     sfx.thunder();
-    this.floatText(h.x + 80, h.y - 150, '魔威压顶', '#ff7a6a', 36, 1.3);
-    this.spark(h.x + 50, h.y - 60, 44, this.glow.red, 280, 0.85, 12);
+    this.floatText(h.x + 110, h.y - 130, style.skill, style.accent, 40, 1.3);
+    this.spark(h.x + 50, h.y - 30, 52, this.foeGlowSprite(), 340, 0.85, 14);
   }
 
   async heroDeath(): Promise<void> {
+    const art = this.foe?.art ?? 'elder';
+    const style = FOE_CUTIN_STYLE[art];
+
+    // 致命一击 21:9 漫画镜头拉近
+    await this.playCutIn(true);
+
     const h = this.heroCore();
     const fc = this.foeCore();
     for (let i = 0; i < 4; i++) {
-      this.bolt(fc.x - 20, fc.y - 30, h.x + (Math.random() - 0.5) * 90, h.y - 60 + (Math.random() - 0.5) * 90, '255,40,40', 0.4, 5);
+      this.bolt(fc.x, fc.y - 15, h.x + (Math.random() - 0.5) * 140, h.y - 40 + (Math.random() - 0.5) * 110, style.rgb, 0.4, 5);
       this.kick(18);
       sfx.thunder();
-      this.flashScreen(0.32, '255,20,20');
+      this.flashScreen(0.34, style.rgb);
+      this.spark(h.x + (Math.random() - 0.5) * 100, h.y + (Math.random() - 0.5) * 80, 32, this.foeGlowSprite(), 300, 0.8, 13);
       await this.wait(0.18);
     }
     await this.wait(0.1);
     this.desaturate = true;
     this.canvas.classList.add('dead');
-    if (ready(this.img.hero)) this.dissolve(this.img.hero, this.heroBox(), '#3a3030');
+    // 前景主角区域升起暗灰余烬
+    for (let i = 0; i < 260; i++) {
+      this.ash.push({
+        x: 90 + Math.random() * 440,
+        y: 360 + Math.random() * 520,
+        vx: (Math.random() - 0.3) * 40,
+        vy: -25 - Math.random() * 75,
+        life: 1.0 + Math.random() * 1.6,
+        max: 2.6,
+        color: '#3a3030',
+        size: 5,
+        delay: Math.random() * 0.5,
+      });
+    }
     this.heroAlpha = 0;
     this.splash('身死道消', { x: 800, y: 380, size: 150, dur: 2.6, tone: 'red' });
     sfx.boom();
@@ -832,7 +953,7 @@ export class BattleScene {
     this.flashScreen(0.55, '255,230,170');
     const hc = this.heroCore();
     for (let i = 0; i < 90; i++) {
-      this.particles.push({ x: hc.x + (Math.random() - 0.5) * 200, y: hc.y + 80 + Math.random() * 120, vx: (Math.random() - 0.5) * 30, vy: -80 - Math.random() * 160, life: 1.4 + Math.random(), max: 2.4, r: 8 + Math.random() * 10, sprite: this.glow.gold, drag: 0.99 });
+      this.particles.push({ x: hc.x + (Math.random() - 0.5) * 260, y: hc.y + 80 + Math.random() * 140, vx: (Math.random() - 0.5) * 30, vy: -80 - Math.random() * 160, life: 1.4 + Math.random(), max: 2.4, r: 8 + Math.random() * 10, sprite: this.glow.gold, drag: 0.99 });
     }
     const fx = this.slotFx[ringIdx];
     if (fx) fx.fill(1.5);
@@ -856,7 +977,7 @@ export class BattleScene {
     const hc = this.heroCore();
     this.ringWave(hc.x, hc.y, '255,230,160', 920, 1.6);
     for (let i = 0; i < 180; i++) {
-      this.particles.push({ x: hc.x + (Math.random() - 0.5) * 300, y: hc.y + Math.random() * 200, vx: (Math.random() - 0.5) * 60, vy: -120 - Math.random() * 240, life: 1.6 + Math.random(), max: 2.6, r: 8 + Math.random() * 14, sprite: this.glow.gold, drag: 0.99 });
+      this.particles.push({ x: hc.x + (Math.random() - 0.5) * 340, y: hc.y + Math.random() * 200, vx: (Math.random() - 0.5) * 60, vy: -120 - Math.random() * 240, life: 1.6 + Math.random(), max: 2.6, r: 8 + Math.random() * 14, sprite: this.glow.gold, drag: 0.99 });
     }
     await this.wait(2.4);
   }
@@ -883,7 +1004,7 @@ export class BattleScene {
         const fc = this.foeCore();
         const src = { x: LAYOUT.cx, y: LAYOUT.cy - 40 };
         this.floatText(src.x, src.y - 40, `后续 ${pb.tailCount} 束合计 +${formatQi(pb.tailQi)}`, '#ffe2b0', 26, 1.6);
-        this.projectiles.push({ kind: 'orb', x0: src.x, y0: src.y, x1: fc.x, y1: fc.y, cx: (src.x + fc.x) / 2, cy: src.y - 200, x: src.x, y: src.y, angle: 0, t: -0.2, dur: 0.5, trail: [], qi: pb.tailQi, size: 42, charge: 0 });
+        this.projectiles.push({ kind: 'orb', x0: src.x, y0: src.y, x1: fc.x, y1: fc.y, cx: (src.x + fc.x) / 2, cy: src.y - 180, x: src.x, y: src.y, angle: 0, t: -0.2, dur: 0.5, trail: [], qi: pb.tailQi, size: 40, charge: 0 });
       }
       if (pb.clock >= pb.flowEnd && (pb.tailFired || pb.tailCount === 0) && this.projectiles.length === 0) {
         this.finishPlayback();
@@ -899,7 +1020,7 @@ export class BattleScene {
     this.flash = Math.max(0, this.flash - rdt * 1.7);
     this.rimFlash = Math.max(0, this.rimFlash - rdt * 3.0);
     this.foeHit = Math.max(0, this.foeHit - rdt * 4);
-    this.heroHit = Math.max(0, this.heroHit - rdt * 2.5);
+    this.heroHit = Math.max(0, this.heroHit - rdt * 2.4);
     this.heroCast = Math.max(0, this.heroCast - rdt * 0.8);
     this.foeKnock *= Math.pow(0.02, rdt);
     if (this.bgFade < 1) this.bgFade = Math.min(1, this.bgFade + clockDt / 1.2);
@@ -916,25 +1037,29 @@ export class BattleScene {
         continue;
       }
       const k = Math.min(1, p.t / p.dur);
-      const e = p.kind === 'orb' ? k * k : 1 - Math.pow(1 - k, 2);
+      const e = p.kind === 'orb' || p.kind === 'foeOrb' ? k * k : 1 - Math.pow(1 - k, 2);
       const u = 1 - e;
       p.x = u * u * p.x0 + 2 * u * e * p.cx + e * e * p.x1;
       p.y = u * u * p.y0 + 2 * u * e * p.cy + e * e * p.y1;
       p.angle = Math.atan2(2 * u * (p.cy - p.y0) + 2 * e * (p.y1 - p.cy), 2 * u * (p.cx - p.x0) + 2 * e * (p.x1 - p.cx));
       p.trail.push({ x: p.x, y: p.y });
-      if (p.trail.length > (p.kind === 'orb' ? 24 : 14)) p.trail.shift();
+      if (p.trail.length > (p.kind === 'sword' ? 14 : 22)) p.trail.shift();
       if (k >= 1) {
         this.projectiles.splice(i, 1);
-        if (p.kind === 'orb') {
-          this.spark(p.x, p.y, 68, this.glow.gold, 440, 0.9, 17);
-          this.ringWave(p.x, p.y, '255,200,110', 280, 0.72);
+        if (p.kind === 'foeOrb') {
+          this.spark(p.x, p.y, 62, this.foeGlowSprite(), 420, 0.8, 18);
+          this.ringWave(p.x, p.y, p.rgb ?? '255,68,52', 320, 0.65);
+          sfx.boom();
+        } else if (p.kind === 'orb') {
+          this.spark(p.x, p.y, 58, this.glow.gold, 340, 0.85, 14);
+          this.ringWave(p.x, p.y + 18, '255,200,110', 220, 0.72);
           this.flashScreen(0.28, '255,220,160');
           sfx.boom();
         } else {
-          this.spark(p.x, p.y, 12, this.glow.teal, 260, 0.5, 9);
+          this.spark(p.x, p.y, 10, this.glow.teal, 200, 0.45, 7);
           this.foeHit = Math.max(this.foeHit, 0.55);
           this.rimFlash = Math.max(this.rimFlash, 0.65);
-          this.foeKnock = Math.max(this.foeKnock, 8);
+          this.foeKnock = Math.max(this.foeKnock, 6);
           this.kick(3.5);
         }
         if (p.qi > 0 && this.playback) this.applyHit(this.playback, p.qi);
@@ -966,7 +1091,7 @@ export class BattleScene {
       if (a.life <= 0) { this.ash.splice(i, 1); continue; }
       a.x += a.vx * slowDt;
       a.y += a.vy * slowDt;
-      a.vx += 25 * slowDt;
+      a.vx += 20 * slowDt;
       a.vy -= 10 * slowDt;
     }
     for (let i = this.smokes.length - 1; i >= 0; i--) {
@@ -975,7 +1100,7 @@ export class BattleScene {
       if (s.life <= 0) { this.smokes.splice(i, 1); continue; }
       s.x += s.vx * slowDt;
       s.y += s.vy * slowDt;
-      s.r += 26 * slowDt;
+      s.r += 20 * slowDt;
     }
     for (let i = this.bolts.length - 1; i >= 0; i--) {
       this.bolts[i].life -= dt;
@@ -991,17 +1116,18 @@ export class BattleScene {
   }
 
   private updateAmbient(dt: number): void {
-    if (!this.foeDead && this.foeAlpha > 0.3 && Math.random() < dt * (this.reducedMotion ? 5 : 18)) {
+    if (!this.foeDead && this.foeAlpha > 0.3 && Math.random() < dt * (this.reducedMotion ? 4 : 14)) {
       const b = this.foeBox();
-      this.smokes.push({ x: b.x + b.w * (0.2 + Math.random() * 0.55), y: b.y + b.h * (0.45 + Math.random() * 0.5), vx: 8 + Math.random() * 22, vy: -18 - Math.random() * 24, r: 18 + Math.random() * 26, life: 1.6, max: 1.6 });
+      this.smokes.push({ x: b.x + b.w * (0.2 + Math.random() * 0.6), y: b.y + b.h * (0.55 + Math.random() * 0.4), vx: 6 + Math.random() * 14, vy: -14 - Math.random() * 18, r: 10 + Math.random() * 16, life: 1.4, max: 1.4 });
     }
     this.nextAmbientBolt -= dt;
     if (this.nextAmbientBolt <= 0 && !this.foeDead && this.foeAlpha > 0.5) {
-      this.nextAmbientBolt = 1.2 + Math.random() * 2.5;
+      this.nextAmbientBolt = 1.6 + Math.random() * 2.8;
       const b = this.foeBox();
-      const x0 = b.x + b.w * (0.25 + Math.random() * 0.35);
-      const y0 = b.y + b.h * 0.16;
-      this.bolt(x0, y0, x0 + (Math.random() - 0.3) * 220, y0 - 50 - Math.random() * 140, '255,78,56', 0.16, 2);
+      const style = FOE_CUTIN_STYLE[this.foe?.art ?? 'elder'];
+      const x0 = b.x + b.w * (0.3 + Math.random() * 0.4);
+      const y0 = b.y + b.h * 0.12;
+      this.bolt(x0, y0, x0 + (Math.random() - 0.5) * 140, y0 - 40 - Math.random() * 90, style.rgb, 0.16, 1.8);
     }
     if (this.tribulationId === 'trib_thunder') {
       this.nextTribBolt -= dt;
@@ -1053,7 +1179,7 @@ export class BattleScene {
     this.drawFoe();
     this.drawBolts();
     this.drawBoard();
-    this.drawHero();
+    this.drawHeroFx();
     this.drawBeam();
     this.drawPulses();
     this.drawProjectiles();
@@ -1063,6 +1189,14 @@ export class BattleScene {
     ctx.restore();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // 前景主角受击时的左下红光冲击暗角
+    if (this.heroHit > 0) {
+      const hg = ctx.createRadialGradient(260, 720, 40, 260, 720, 560);
+      hg.addColorStop(0, `rgba(255,48,38,${this.heroHit * 0.45})`);
+      hg.addColorStop(1, 'rgba(255,48,38,0)');
+      ctx.fillStyle = hg;
+      ctx.fillRect(0, 0, STAGE_W, STAGE_H);
+    }
     if (this.tribulationId === 'trib_demon' && !this.desaturate) {
       const v = ctx.createRadialGradient(STAGE_W / 2, STAGE_H / 2, STAGE_H * 0.32, STAGE_W / 2, STAGE_H / 2, STAGE_H);
       v.addColorStop(0, 'rgba(120,0,0,0)');
@@ -1087,10 +1221,9 @@ export class BattleScene {
       ctx.fillRect(0, 0, STAGE_W, STAGE_H);
       ctx.globalCompositeOperation = 'source-over';
     }
-    // 电影暖黑暮色暗角，统一全画面层次
     const vignette = ctx.createRadialGradient(STAGE_W / 2, STAGE_H * 0.48, STAGE_H * 0.44, STAGE_W / 2, STAGE_H / 2, STAGE_H * 1.05);
     vignette.addColorStop(0, 'rgba(0,0,0,0)');
-    vignette.addColorStop(1, 'rgba(10,4,2,.58)');
+    vignette.addColorStop(1, 'rgba(10,4,2,.56)');
     ctx.fillStyle = vignette;
     ctx.fillRect(0, 0, STAGE_W, STAGE_H);
   }
@@ -1100,35 +1233,34 @@ export class BattleScene {
     const par = this.bgParallax();
     const paint = (bg: HTMLImageElement | undefined, alpha: number): void => {
       if (!ready(bg) || alpha <= 0) return;
-      const bw = STAGE_W + 96;
-      const bh = Math.max((bw * bg.naturalHeight) / bg.naturalWidth, STAGE_H + 54);
-      // 高清晰度呈现演武巨殿，同时透出约 12% 底层 WebGL 火烧云动态能量流
-      ctx.globalAlpha = alpha * 0.88;
-      ctx.drawImage(bg, -48 + par.x, (STAGE_H - bh) / 2 + par.y, bw, bh);
+      const bw = STAGE_W + 48;
+      const bh = Math.max((bw * bg.naturalHeight) / bg.naturalWidth, STAGE_H + 28);
+      // 91% 实景 + 9% 底层 WebGL 火烧云动态能量暗流，确保原生主角清晰锐利
+      ctx.globalAlpha = alpha * 0.91;
+      ctx.drawImage(bg, -24 + par.x, (STAGE_H - bh) / 2 + par.y, bw, bh);
     };
     if (this.bgFade < 1) paint(this.img.bgs[this.bgPrev], 1);
     paint(this.img.bgs[this.bgIndex], this.bgFade < 1 ? this.bgFade : 1);
 
-    // 上下暮色渐层压暗（让顶部 HUD 与底部聚灵玉匣高反差可读）
     const g = ctx.createLinearGradient(0, 0, 0, STAGE_H);
-    g.addColorStop(0, 'rgba(14,6,5,.48)');
-    g.addColorStop(0.28, 'rgba(14,6,5,.04)');
-    g.addColorStop(0.72, 'rgba(10,5,4,.16)');
-    g.addColorStop(1, 'rgba(6,3,3,.72)');
+    g.addColorStop(0, 'rgba(14,6,5,.44)');
+    g.addColorStop(0.26, 'rgba(14,6,5,.02)');
+    g.addColorStop(0.75, 'rgba(10,5,4,.12)');
+    g.addColorStop(1, 'rgba(6,3,3,.64)');
     ctx.globalAlpha = 1;
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, STAGE_W, STAGE_H);
   }
 
-  /** 蟠龙石柱旁 7 处火盆实时跳动火光 */
+  /** 蟠龙石柱旁 6 处可见火盆的实时跳动火光 */
   private drawBraziers(): void {
     const ctx = this.ctx;
     const par = this.bgParallax();
     ctx.globalCompositeOperation = 'lighter';
     for (const b of BRAZIERS) {
       const flick = this.reducedMotion ? 0 : Math.sin(this.time * 7.3 + b.phase) * 0.14 + Math.sin(this.time * 13.7 + b.phase * 2) * 0.08;
-      const bx = b.x + par.x * 0.9;
-      const by = b.y + par.y * 0.9;
+      const bx = b.x + par.x;
+      const by = b.y + par.y;
       this.drawGlow(this.glow.orange, bx, by, b.r * (1 + flick * 0.6), 0.34 + flick * 0.35);
       this.drawGlow(this.glow.gold, bx, by - 4, b.r * 0.42 * (1 + flick * 0.4), 0.44 + flick * 0.3);
     }
@@ -1141,8 +1273,8 @@ export class BattleScene {
     ctx.globalCompositeOperation = 'source-over';
     for (const f of this.fogs) {
       if (f.near !== near) continue;
-      ctx.globalAlpha = f.a * (near ? 0.42 : 0.38);
-      ctx.drawImage(this.fogSprite, f.x - this.mouse.x * (near ? 36 : 14), f.y, 256 * f.s, 128 * f.s * 0.6);
+      ctx.globalAlpha = f.a * (near ? 0.38 : 0.34);
+      ctx.drawImage(this.fogSprite, f.x - this.mouse.x * (near ? 28 : 12), f.y, 256 * f.s, 128 * f.s * 0.6);
     }
     ctx.globalAlpha = 1;
   }
@@ -1151,12 +1283,13 @@ export class BattleScene {
     this.ctx.globalCompositeOperation = 'lighter';
     for (const e of this.embers) {
       const pulse = 0.34 + 0.32 * Math.sin(this.time * 3.1 + e.p);
-      this.drawGlow(e.warm ? this.glow.amber : this.glow.gold, e.x - this.mouse.x * 18, e.y, e.r, pulse);
+      this.drawGlow(e.warm ? this.glow.amber : this.glow.gold, e.x - this.mouse.x * 16, e.y, e.r, pulse);
     }
     this.ctx.globalCompositeOperation = 'source-over';
     this.ctx.globalAlpha = 1;
   }
 
+  /** 远景对手：立于演武场远端中心石台，带夕阳方向性长影、接触阴影与火烧云背光 */
   private drawFoe(): void {
     const ctx = this.ctx;
     const img = this.foeImage();
@@ -1175,33 +1308,48 @@ export class BattleScene {
     const b = this.foeBox();
     const foot = this.foeFoot();
 
-    // 1. 落地透视接触投影（Contact Shadow）+ 地面暗红魔气倒影，彻底铆定在演武石面上
     if (!this.foeDead && this.foeAlpha > 0) {
+      // 1. 夕阳逆光长投影（从对手脚下斜向前左石板拉长，与参考图一致）
       ctx.save();
+      const lg = ctx.createLinearGradient(foot.x, foot.y, foot.x - 165, foot.y + 46);
+      lg.addColorStop(0, `rgba(10,4,3,${0.66 * this.foeAlpha})`);
+      lg.addColorStop(0.55, `rgba(14,6,5,${0.32 * this.foeAlpha})`);
+      lg.addColorStop(1, 'rgba(14,6,5,0)');
+      ctx.fillStyle = lg;
+      ctx.beginPath();
+      ctx.moveTo(foot.x - 18, foot.y - 3);
+      ctx.lineTo(foot.x + 20, foot.y + 4);
+      ctx.lineTo(foot.x - 140, foot.y + 50);
+      ctx.lineTo(foot.x - 172, foot.y + 32);
+      ctx.closePath();
+      ctx.fill();
+
+      // 2. 脚底致密接触投影（Contact Shadow）
       ctx.translate(foot.x, foot.y);
-      ctx.scale(1, 0.28);
-      const shR = b.w * 0.46;
-      const sh = ctx.createRadialGradient(0, 0, shR * 0.1, 0, 0, shR);
-      sh.addColorStop(0, `rgba(10,3,4,${0.82 * this.foeAlpha})`);
-      sh.addColorStop(0.55, `rgba(18,5,6,${0.48 * this.foeAlpha})`);
-      sh.addColorStop(1, 'rgba(18,5,6,0)');
+      ctx.scale(1, 0.26);
+      const shR = b.w * 0.44;
+      const sh = ctx.createRadialGradient(0, 0, shR * 0.08, 0, 0, shR);
+      sh.addColorStop(0, `rgba(8,3,3,${0.88 * this.foeAlpha})`);
+      sh.addColorStop(0.6, `rgba(14,5,5,${0.46 * this.foeAlpha})`);
+      sh.addColorStop(1, 'rgba(14,5,5,0)');
       ctx.fillStyle = sh;
       ctx.beginPath();
       ctx.arc(0, 0, shR, 0, TAU);
       ctx.fill();
       ctx.restore();
 
+      // 3. 夕阳背光辉光 + 魔气威压光晕
       ctx.globalCompositeOperation = 'lighter';
-      this.drawGlow(this.glow.red, foot.x, foot.y - 6, b.w * 0.42, (0.20 + Math.sin(this.time * 2.2) * 0.05) * this.foeAlpha);
-      this.drawGlow(this.glow.orange, b.x + b.w * 0.36, b.y + b.h * 0.42, b.h * 0.56, (0.18 + Math.sin(this.time * 1.9) * 0.05) * this.foeAlpha);
+      this.drawGlow(this.glow.amber, foot.x, b.y + b.h * 0.5, b.h * 0.72, (0.24 + Math.sin(this.time * 2.0) * 0.04) * this.foeAlpha);
+      this.drawGlow(this.foeGlowSprite(), foot.x, foot.y - 8, b.w * 0.52, (0.22 + Math.sin(this.time * 2.4) * 0.05) * this.foeAlpha);
       if (this.rimFlash > 0) {
-        this.drawGlow(this.glow.gold, b.x + b.w * 0.35, b.y + b.h * 0.42, b.h * 0.72, this.rimFlash * 0.45);
+        this.drawGlow(this.glow.gold, foot.x, b.y + b.h * 0.45, b.h * 0.95, this.rimFlash * 0.55);
       }
       ctx.globalCompositeOperation = 'source-over';
     }
 
     for (const s of this.smokes) {
-      ctx.globalAlpha = Math.max(0, s.life / s.max) * 0.52;
+      ctx.globalAlpha = Math.max(0, s.life / s.max) * 0.48;
       ctx.drawImage(this.smokeSprite, s.x - s.r, s.y - s.r, s.r * 2, s.r * 2);
     }
 
@@ -1213,13 +1361,13 @@ export class BattleScene {
       ctx.filter = 'none';
       if (this.rimFlash > 0) {
         ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = this.rimFlash * 0.34;
-        ctx.drawImage(gold, b.x - 4, b.y, b.w, b.h);
+        ctx.globalAlpha = this.rimFlash * 0.42;
+        ctx.drawImage(gold, b.x - 2, b.y, b.w, b.h);
         ctx.globalCompositeOperation = 'source-over';
       }
       if (this.foeHit > 0) {
         ctx.globalCompositeOperation = 'lighter';
-        ctx.globalAlpha = this.foeHit * 0.8;
+        ctx.globalAlpha = this.foeHit * 0.85;
         ctx.drawImage(white, b.x, b.y, b.w, b.h);
         ctx.globalCompositeOperation = 'source-over';
       }
@@ -1261,14 +1409,13 @@ export class BattleScene {
     let outer = 0;
     board.forEach((ring, r) => { if (ring.unlocked) outer = Math.max(outer, ringRadius(r, this.ringReveal[r])); });
     if (outer > 0) {
-      // 柔和的石阵底影，保留演武场地面石砖纹理同时确保符阵高反差可读
-      const shadowR = outer + 68;
+      const shadowR = outer + 60;
       ctx.save();
       ctx.translate(LAYOUT.cx, LAYOUT.cy);
       ctx.scale(1, LAYOUT.ratio);
       const g = ctx.createRadialGradient(0, 0, shadowR * 0.12, 0, 0, shadowR);
-      g.addColorStop(0, 'rgba(14,8,6,.56)');
-      g.addColorStop(0.68, 'rgba(14,8,6,.36)');
+      g.addColorStop(0, 'rgba(14,8,6,.44)');
+      g.addColorStop(0.68, 'rgba(14,8,6,.26)');
       g.addColorStop(1, 'rgba(14,8,6,0)');
       ctx.fillStyle = g;
       ctx.globalAlpha = 1;
@@ -1277,14 +1424,14 @@ export class BattleScene {
       ctx.fill();
       ctx.restore();
     }
-    // 多层反向旋转丹田星轨法阵
+    // 丹田星轨法阵
     ctx.save();
     ctx.translate(LAYOUT.cx, LAYOUT.cy);
     ctx.scale(1, LAYOUT.ratio);
     ctx.globalCompositeOperation = 'lighter';
     ctx.save();
     ctx.rotate(this.time * (running ? 0.9 : 0.25));
-    ctx.strokeStyle = `rgba(255,214,130,${running ? 0.70 : 0.38})`;
+    ctx.strokeStyle = `rgba(255,214,130,${running ? 0.72 : 0.36})`;
     ctx.lineWidth = 2;
     for (let i = 0; i < 8; i++) {
       ctx.rotate(TAU / 8);
@@ -1300,7 +1447,7 @@ export class BattleScene {
 
     ctx.save();
     ctx.rotate(-this.time * (running ? 1.2 : 0.35));
-    ctx.strokeStyle = `rgba(110,255,226,${running ? 0.58 : 0.30})`;
+    ctx.strokeStyle = `rgba(110,255,226,${running ? 0.58 : 0.28})`;
     ctx.lineWidth = 1.6;
     ctx.setLineDash([6, 8]);
     ctx.beginPath();
@@ -1314,7 +1461,7 @@ export class BattleScene {
     ctx.restore();
 
     ctx.globalCompositeOperation = 'lighter';
-    this.drawGlow(this.glow.gold, LAYOUT.cx, LAYOUT.cy, running ? 78 : 52, running ? 0.58 : 0.32);
+    this.drawGlow(this.glow.gold, LAYOUT.cx, LAYOUT.cy, running ? 76 : 50, running ? 0.56 : 0.30);
     // 同心环
     board.forEach((ring, r) => {
       const radius = ringRadius(r, ring.unlocked ? this.ringReveal[r] : 1);
@@ -1338,7 +1485,7 @@ export class BattleScene {
         ctx.setLineDash([]);
       } else {
         this.ellipse(radius);
-        ctx.strokeStyle = 'rgba(255,216,160,.10)';
+        ctx.strokeStyle = 'rgba(255,216,160,.09)';
         ctx.lineWidth = 1.8;
         ctx.setLineDash([5, 14]);
         ctx.stroke();
@@ -1365,18 +1512,17 @@ export class BattleScene {
     const reveal = this.ringReveal[ref.ring];
     const cat = node?.category ?? null;
     const rgb = cat ? CATEGORY_RGB[cat] : '235,196,120';
-    const rx = ref.ring === 0 ? 35 : 30;
-    const ry = rx * 0.38;
+    const rx = ref.ring === 0 ? 34 : 29;
+    const ry = rx * 0.35;
     const isTarget = this.view.target?.ring === ref.ring && this.view.target.slot === ref.slot;
     const hover = this.view.hover?.ring === ref.ring && this.view.hover.slot === ref.slot;
     const aiming = !node && (this.view.placing || this.view.moveTargeting);
 
     ctx.globalCompositeOperation = 'lighter';
     const sprite = cat === 'AMPLIFY' ? this.glow.gold : cat === 'RELEASE' ? this.glow.orange : cat === 'CONDUCT' ? this.glow.teal : this.glow.amber;
-    this.drawGlow(sprite, p.x, p.y, 58 + fx * 34, ((node ? 0.38 : 0.14) + fx * 0.55) * reveal);
+    this.drawGlow(sprite, p.x, p.y, 56 + fx * 34, ((node ? 0.38 : 0.14) + fx * 0.55) * reveal);
     ctx.globalCompositeOperation = 'source-over';
 
-    // 玄石鎏金阵眼底座
     const g = ctx.createRadialGradient(p.x - 8, p.y - 4, 2, p.x, p.y, rx);
     g.addColorStop(0, node ? `rgba(${rgb},.78)` : 'rgba(130,96,64,.52)');
     g.addColorStop(0.58, 'rgba(26,18,16,.90)');
@@ -1402,7 +1548,7 @@ export class BattleScene {
 
     if (node && cat) {
       ctx.globalCompositeOperation = 'lighter';
-      const ph = 66 + fx * 65;
+      const ph = 64 + fx * 62;
       const pg = ctx.createLinearGradient(0, p.y - ph, 0, p.y);
       pg.addColorStop(0, `rgba(${rgb},0)`);
       pg.addColorStop(1, `rgba(${rgb},${0.32 + fx * 0.48})`);
@@ -1418,8 +1564,8 @@ export class BattleScene {
       ctx.globalCompositeOperation = 'source-over';
 
       const bob = this.reducedMotion ? 0 : Math.sin(this.time * 2.4 + ref.ring * 2 + ref.slot) * 3.5;
-      const fy = p.y - 28 + bob;
-      const orbSize = (ref.ring === 0 ? 48 : 42) + fx * 10;
+      const fy = p.y - 26 + bob;
+      const orbSize = (ref.ring === 0 ? 46 : 40) + fx * 10;
       const orbImg = this.img.daos[node.configId];
       if (ready(orbImg)) {
         ctx.save();
@@ -1428,7 +1574,7 @@ export class BattleScene {
         ctx.restore();
       }
       ctx.globalAlpha = reveal;
-      ctx.font = `${ref.ring === 0 ? 24 : 21}px "Ma Shan Zheng","STKaiti","KaiTi",serif`;
+      ctx.font = `${ref.ring === 0 ? 23 : 20}px "Ma Shan Zheng","STKaiti","KaiTi",serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.lineWidth = 4;
@@ -1458,32 +1604,25 @@ export class BattleScene {
     ctx.globalAlpha = 1;
   }
 
-  private drawHero(): void {
+  /** 前景原生主角的施法掌心聚灵光效（不再重复粘贴 2D 角色贴图） */
+  private drawHeroFx(): void {
     const ctx = this.ctx;
-    const img = this.img.hero;
-    if (!ready(img) || this.heroAlpha <= 0) return;
-    if (!this.heroRed) this.heroRed = silhouette(img, '#ff3020');
-    const b = this.heroBox();
-
-    // 主角后肩近景脚下与左侧柱影融合
-    ctx.save();
-    const breathe = this.reducedMotion ? 0 : Math.sin(this.time * 1.6) * 0.005;
-    ctx.translate(b.x + b.w / 2, b.y + b.h);
-    ctx.transform(1, 0, this.reducedMotion ? 0 : Math.sin(this.time * 0.85) * 0.009, 1 + breathe, 0, 0);
-    ctx.globalAlpha = this.heroAlpha;
-    ctx.drawImage(img, -b.w / 2, -b.h, b.w, b.h);
-    if (this.heroHit > 0) {
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = this.heroHit * 0.65;
-      ctx.drawImage(this.heroRed, -b.w / 2, -b.h, b.w, b.h);
+    // 若用户显式传入了独立 hero 图才绘制；默认使用原生融合 OTS 背景
+    if (this.img.hero && ready(this.img.hero) && this.heroAlpha > 0) {
+      if (!this.heroRed) this.heroRed = silhouette(this.img.hero, '#ff3020');
+      const h = 540;
+      const w = h * (this.img.hero.naturalWidth / this.img.hero.naturalHeight);
+      ctx.globalAlpha = this.heroAlpha;
+      ctx.drawImage(this.img.hero, -80, STAGE_H - h + 60, w, h);
     }
-    ctx.restore();
-
-    // 施法掌心聚灵青金辉光
+    if (this.heroAlpha <= 0) return;
     ctx.globalCompositeOperation = 'lighter';
     const hand = this.heroHand();
-    this.drawGlow(this.glow.teal, hand.x, hand.y, 46 + this.heroCast * 58, 0.42 + this.heroCast * 0.58);
-    this.drawGlow(this.glow.amber, hand.x, hand.y, 26 + this.heroCast * 32, 0.22 + this.heroCast * 0.35);
+    const idlePulse = 0.26 + Math.sin(this.time * 2.4) * 0.08;
+    this.drawGlow(this.glow.teal, hand.x, hand.y, 30 + this.heroCast * 62, idlePulse + this.heroCast * 0.65);
+    if (this.heroCast > 0.05) {
+      this.drawGlow(this.glow.white, hand.x, hand.y, 16 + this.heroCast * 24, this.heroCast * 0.85);
+    }
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
   }
@@ -1496,7 +1635,7 @@ export class BattleScene {
     const k = Math.min(1, this.beam.t / this.beam.dur);
     const a = this.beam.t > this.beam.dur ? 1 - (this.beam.t - this.beam.dur) / 0.3 : 1;
     const cx = (hand.x + s0.x) / 2;
-    const cy = Math.min(hand.y, s0.y) - 85;
+    const cy = Math.min(hand.y, s0.y) - 65;
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 1;
     ctx.beginPath();
@@ -1511,13 +1650,13 @@ export class BattleScene {
       ctx.lineTo(px, py);
     }
     ctx.strokeStyle = `rgba(96,255,226,${0.32 * a})`;
-    ctx.lineWidth = 16;
+    ctx.lineWidth = 15;
     ctx.stroke();
     ctx.strokeStyle = `rgba(245,255,252,${0.95 * a})`;
     ctx.lineWidth = 3.5;
     ctx.stroke();
-    this.drawGlow(this.glow.white, px, py, 28, a);
-    this.drawGlow(this.glow.teal, px, py, 54, 0.75 * a);
+    this.drawGlow(this.glow.white, px, py, 26, a);
+    this.drawGlow(this.glow.teal, px, py, 50, 0.75 * a);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
   }
@@ -1574,7 +1713,7 @@ export class BattleScene {
     ctx.rotate(angle);
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.85;
-    ctx.drawImage(this.glow.teal, -len * 0.72, -18, len * 1.45, 36);
+    ctx.drawImage(this.glow.teal, -len * 0.72, -len * 0.24, len * 1.45, len * 0.48);
     ctx.globalAlpha = 1;
     const g = ctx.createLinearGradient(-len * 0.4, 0, len * 0.5, 0);
     g.addColorStop(0, 'rgba(150,255,235,.68)');
@@ -1582,46 +1721,62 @@ export class BattleScene {
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.moveTo(len * 0.54, 0);
-    ctx.lineTo(-len * 0.25, -3.5);
-    ctx.lineTo(-len * 0.25, 3.5);
+    ctx.lineTo(-len * 0.25, -len * 0.048);
+    ctx.lineTo(-len * 0.25, len * 0.048);
     ctx.closePath();
     ctx.fill();
     ctx.fillStyle = 'rgba(255,228,158,.96)';
-    ctx.fillRect(-len * 0.28, -7.5, 3.2, 15);
-    ctx.fillRect(-len * 0.45, -1.7, len * 0.17, 3.4);
+    ctx.fillRect(-len * 0.28, -len * 0.10, len * 0.045, len * 0.20);
+    ctx.fillRect(-len * 0.45, -len * 0.024, len * 0.17, len * 0.048);
     ctx.restore();
   }
 
+  /** 带真实纵深透视缩放的法术投射物：主角发招由近及远缩小；对手发招由远及近放大扑面而来 */
   private drawProjectiles(): void {
     const ctx = this.ctx;
     ctx.globalCompositeOperation = 'lighter';
     for (const p of this.projectiles) {
       if (p.t < 0) {
         if (p.kind === 'orb') {
-          this.drawGlow(this.glow.gold, p.x0, p.y0, p.size * (1 + p.charge * 1.65), 0.92 * p.charge);
+          this.drawGlow(this.glow.gold, p.x0, p.y0, p.size * (1 + p.charge * 1.55), 0.92 * p.charge);
           this.drawGlow(this.glow.white, p.x0, p.y0, p.size * 0.65 * p.charge, p.charge);
         }
         continue;
       }
-      if (p.kind === 'sword') {
+      const k = Math.max(0, Math.min(1, p.t / p.dur));
+      if (p.kind === 'foeOrb') {
+        // 敌人反击：由远及近透视放大（0.45 -> 2.15）
+        const persp = 0.45 + 1.70 * (k * k);
+        const sprite = this.foeGlowSprite();
+        p.trail.forEach((t, i) => {
+          const f = (i + 1) / p.trail.length;
+          this.drawGlow(sprite, t.x, t.y, p.size * persp * 1.8 * f, 0.58 * f);
+        });
+        this.drawGlow(sprite, p.x, p.y, p.size * persp * 2.8, 1);
+        this.drawGlow(this.glow.white, p.x, p.y, p.size * persp * 0.95, 0.95);
+      } else if (p.kind === 'sword') {
+        // 主角万剑诀：由近及远透视缩小（1.25 -> 0.52）
+        const persp = 1.25 - 0.73 * k;
         ctx.globalAlpha = 1;
         ctx.beginPath();
         p.trail.forEach((t, i) => (i ? ctx.lineTo(t.x, t.y) : ctx.moveTo(t.x, t.y)));
         ctx.strokeStyle = 'rgba(130,255,232,.42)';
-        ctx.lineWidth = 6.5;
+        ctx.lineWidth = Math.max(2, 6.2 * persp);
         ctx.stroke();
         ctx.strokeStyle = 'rgba(255,255,255,.78)';
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = Math.max(1, 1.8 * persp);
         ctx.stroke();
-        this.drawSword(p.x, p.y, p.angle, 74);
+        this.drawSword(p.x, p.y, p.angle, 74 * persp);
       } else {
+        // 主角灵爆术：由近及远透视缩小（1.22 -> 0.58）
+        const persp = 1.22 - 0.64 * k;
         p.trail.forEach((t, i) => {
           const f = (i + 1) / p.trail.length;
-          this.drawGlow(this.glow.orange, t.x, t.y, p.size * 1.9 * f, 0.54 * f);
-          this.drawGlow(this.glow.gold, t.x, t.y, p.size * f, 0.65 * f);
+          this.drawGlow(this.glow.orange, t.x, t.y, p.size * persp * 1.85 * f, 0.54 * f);
+          this.drawGlow(this.glow.gold, t.x, t.y, p.size * persp * f, 0.65 * f);
         });
-        this.drawGlow(this.glow.gold, p.x, p.y, p.size * 2.8, 1);
-        this.drawGlow(this.glow.white, p.x, p.y, p.size * 1.08, 1);
+        this.drawGlow(this.glow.gold, p.x, p.y, p.size * persp * 2.7, 1);
+        this.drawGlow(this.glow.white, p.x, p.y, p.size * persp * 1.05, 1);
       }
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -1639,9 +1794,9 @@ export class BattleScene {
       const a = Math.max(0, w.life / w.max);
       ctx.globalAlpha = 1;
       ctx.beginPath();
-      ctx.ellipse(w.x, w.y, w.r, w.r * 0.45, 0, 0, TAU);
+      ctx.ellipse(w.x, w.y, w.r, w.r * 0.36, 0, 0, TAU);
       ctx.strokeStyle = `rgba(${w.rgb},${a * 0.85})`;
-      ctx.lineWidth = 2 + 8.5 * a;
+      ctx.lineWidth = 2 + 8 * a;
       ctx.stroke();
     }
     ctx.globalCompositeOperation = 'source-over';
