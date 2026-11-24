@@ -1,5 +1,5 @@
 // ============================================================
-// 斗法场景 · 道韵视觉映射（符字、简称、类别配色）与数值格式化
+// 斗法场景 · 道韵视觉映射（符字、简称、灵印贴图、类别配色）与数值格式化
 // ============================================================
 import type { DaoCategory, DaoRhyme } from '../types';
 
@@ -25,16 +25,27 @@ const SHORT: Record<string, string> = {
   dao_sword: '万剑',
 };
 
+export const DAO_ORB_FILES: Record<string, string> = {
+  dao_chain: 'dao_chain.png',
+  dao_jump: 'dao_jump.png',
+  dao_reverse: 'dao_reverse.png',
+  dao_gather: 'dao_gather.png',
+  dao_crit: 'dao_crit.png',
+  dao_resonance: 'dao_resonance.png',
+  dao_burst: 'dao_burst.png',
+  dao_sword: 'dao_sword.png',
+};
+
 export const CATEGORY_RGB: Record<DaoCategory, string> = {
-  CONDUCT: '127,255,224',
-  AMPLIFY: '255,210,122',
-  RELEASE: '255,120,88',
+  CONDUCT: '92,255,224',
+  AMPLIFY: '255,212,112',
+  RELEASE: '255,112,78',
 };
 
 export const CATEGORY_HEX: Record<DaoCategory, string> = {
-  CONDUCT: '#8fffe6',
-  AMPLIFY: '#ffd98a',
-  RELEASE: '#ff9a78',
+  CONDUCT: '#7effe4',
+  AMPLIFY: '#ffd878',
+  RELEASE: '#ff8a66',
 };
 
 export const CATEGORY_LABEL: Record<DaoCategory, string> = {
@@ -53,6 +64,11 @@ export function glyphOf(card: DaoLike): string {
 
 export function shortName(card: DaoLike): string {
   return SHORT[card.configId] ?? card.name.slice(0, 2);
+}
+
+export function orbArtPath(configId: string): string {
+  const file = DAO_ORB_FILES[configId] ?? 'dao_gather.png';
+  return `assets/daos/${file}`;
 }
 
 /** 大数值按中文习惯缩写：12,345 → 1.2万，3.2亿 */

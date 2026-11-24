@@ -1,4 +1,6 @@
 import { animationDirector } from './animationQueue';
+import { orbArtPath } from './battle/daoVisual';
+import { attachOrbJuice } from './battle/orbJuice';
 import { sound } from './audio';
 import { createDao, getDaoConfig } from './config';
 import { DEMO_CONFIG, demoAnalytics, demoSession } from './demoConfig';
@@ -113,7 +115,8 @@ function renderBoard(): void {
     el.classList.toggle('fuel-destination', index === fuelSlot);
     el.setAttribute('aria-label', `${SLOT_NAMES[index]}，${card ? card.name : '空槽'}`);
     el.innerHTML = card
-      ? `<span class="slot-badge-row">${cardTags(card)}</span><span class="slot-card-name">${card.name}</span>`
+      ? `<img class="slot-orb-bg" src="${orbArtPath(card.configId)}" alt="" aria-hidden="true" draggable="false" />` +
+        `<span class="slot-badge-row">${cardTags(card)}</span><span class="slot-card-name">${card.name}</span>`
       : '<span class="slot-empty-label">+ 空槽</span>';
     const label = document.createElement('span');
     label.className = index === 0 ? 'slot-empty-label entrance' : 'slot-empty-label';
@@ -131,14 +134,20 @@ function renderHand(): void {
     button.type = 'button';
     button.dataset.cardUid = card.uid;
     button.dataset.configId = card.configId;
-    button.className = 'hand-card';
+    button.className = `hand-card dao-orb-mini cat-${card.category}`;
     button.classList.toggle('selected', card.uid === selectedCardUid);
     button.classList.toggle('recommended', card.uid === nextStarter);
     button.disabled = action.mode === 'SELECT_MOVE_DEST' ||
       (action.mode === 'SELECT_FUEL_OVERWRITE' && action.cardUid === card.uid);
     button.setAttribute('aria-pressed', String(card.uid === selectedCardUid));
+    button.title = `${card.name} LV${card.level}：${card.description}`;
     button.innerHTML = `
-      <span class="card-top">${cardTags(card)}</span>
+      <span class="mini-orb-wrap">
+        <span class="mini-orb-ring" aria-hidden="true"></span>
+        <img class="mini-orb-art" src="${orbArtPath(card.configId)}" alt="" draggable="false" />
+        <span class="mini-orb-sheen" aria-hidden="true"></span>
+        <span class="slot-level-tag mini-lv">LV${card.level}</span>
+      </span>
       <span class="card-name">${card.name}</span>
       <span class="card-desc">${card.description}</span>`;
     button.onclick = () => onCardClick(card);
@@ -216,7 +225,8 @@ function resetAction(): void {
 function cancelAction(): void {
   resetAction();
   setFeedback();
-  renderAll();
+  attachOrbJuice(handDeck, '.hand-card');
+renderAll();
 }
 
 function resolvePlacement(result: PlacementResult, slot: number): void {

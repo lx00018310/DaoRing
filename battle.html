@@ -3,15 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DaoRing · 斗法</title>
+    <title>DaoRing · 周天斗法</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/battle/battle.css" />
   </head>
   <body>
     <div id="stage">
+      <!-- 底层：WebGL 实时道韵漩涡着色器 -->
+      <canvas id="bg-gl" width="800" height="450" aria-hidden="true"></canvas>
+      <!-- 主舞台：斗法场景渲染 -->
       <canvas id="cv" width="1600" height="900" aria-label="斗法场景"></canvas>
+      <!-- 电影暗角与细微扫描线质感层 -->
+      <div id="crt-overlay" aria-hidden="true"></div>
 
       <!-- 左上：境界与真气 -->
       <div id="hud-l" class="hud">
@@ -41,11 +46,25 @@
 
       <div id="hint" role="status"></div>
       <div id="toast" aria-live="polite"></div>
-      <div id="tally"></div>
+
+      <!-- Balatro 风格双胶囊算分台：基础气 × 倍率 → 总产气 -->
+      <div id="tally">
+        <div class="calc-row">
+          <span class="calc-pill pill-base"><small>基础气</small><b id="calc-base">10</b></span>
+          <span class="calc-x">×</span>
+          <span class="calc-pill pill-mult"><small>倍率</small><b id="calc-mult">1.0</b></span>
+        </div>
+        <div class="calc-total" id="calc-total">周天运转</div>
+      </div>
+
       <div id="slots"></div>
       <div id="menu" hidden></div>
 
-      <div id="tray"><div id="hand"></div></div>
+      <!-- 底部：聚灵玉匣（悬空道韵灵印托盘，非纸牌） -->
+      <div id="tray">
+        <div class="tray-label" aria-hidden="true">聚 灵 玉 匣 · 蕴 藏 道 韵</div>
+        <div id="hand"></div>
+      </div>
       <button type="button" id="btn-fuse" class="orb small" aria-label="炼化道韵">炼化</button>
       <button type="button" id="btn-run" class="orb" aria-label="运转周天">周天<small id="run-cost"></small></button>
       <button type="button" id="btn-skip" class="skip" hidden>跳过 ›</button>

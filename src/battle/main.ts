@@ -1,15 +1,17 @@
 // ============================================================
 // 斗法模式入口（battle.html）
-// 一场一场的斗法：布阵 → 运转周天 → 万剑诀 / 灵爆术攻敌 →
+// 一场一场的斗法：凝炼道韵灵印入阵 → 运转周天 → 万剑诀 / 灵爆术攻敌 →
 // 单次产气破开护体魔光即斩敌晋升，获得道韵与灵宝；
 // 真气不足以再运周天即身死道消。规则全部来自 game.ts / engine.ts。
 // ============================================================
 import { BOARD, getRelicConfig, getStageConfig } from '../config';
 import { moveDao, placeDao, removeDao, type PlacementResult } from '../game';
 import type { DaoRhyme, RelicConfig } from '../types';
-import { CATEGORY_HEX, CATEGORY_LABEL, ROMAN, formatQi, glyphOf, shortName } from './daoVisual';
+import { BalatroBackdrop } from './balatroShader';
+import { CATEGORY_HEX, CATEGORY_LABEL, DAO_ORB_FILES, ROMAN, formatQi, orbArtPath, shortName } from './daoVisual';
 import { SLOT_HIT, STAGE_H, STAGE_W, slotPoint, type SlotRef } from './geometry';
 import { FOE_ART_FILES, type FoeArt } from './foes';
+import { attachOrbJuice, popBounce } from './orbJuice';
 import { BattleScene, categoryOf } from './scene';
 import { BattleSession, talentRows, upgradeSavedTalent, type BattleTurn } from './session';
 import { loadKarmaProfile } from '../storage';
@@ -32,6 +34,9 @@ const handEl = $('hand');
 const hintEl = $('hint');
 const toastEl = $('toast');
 const tallyEl = $('tally');
+const calcBaseEl = $('calc-base');
+const calcMultEl = $('calc-mult');
+const calcTotalEl = $('calc-total');
 const modalEl = $('modal');
 const btnRun = $<HTMLButtonElement>('btn-run');
 const btnFuse = $<HTMLButtonElement>('btn-fuse');
@@ -39,14 +44,27 @@ const btnSkip = $<HTMLButtonElement>('btn-skip');
 
 const REALM_NAMES = BOARD.realmNames.map((name) => `${name}期`);
 
+// WebGL 实时道韵漩涡底景
+const backdrop = new BalatroBackdrop(document.getElementById('bg-gl') as HTMLCanvasElement | null);
+backdrop.start();
+
+// 触感反馈：道韵灵珠 3D 悬停倾角与高光
+attachOrbJuice(handEl, '.card');
+
 const foeArt = Object.fromEntries(
   (Object.keys(FOE_ART_FILES) as FoeArt[]).map((art) => [art, `assets/battle/${FOE_ART_FILES[art]}`]),
 ) as Record<FoeArt, string>;
+const daoOrbArt = Object.fromEntries(
+  Object.keys(DAO_ORB_FILES).map((id) => [id, orbArtPath(id)]),
+);
 const scene = new BattleScene(canvas, $('fx'), {
-  // 炼气在宗门广场，筑基以后转战群山云海
-  backgrounds: ['assets/battle/bg_sect_plaza.jpg', 'assets/battle/bg_misty_peaks.jpg'],
+  // 全境界统一套用「方案二：演武巨殿」傍晚火烧云演武场（后续可按境界追加专属图）
+  backgrounds: [
+    'assets/battle/bg_martial_plaza.webp',
+  ],
   hero: 'assets/battle/hero_cultivator.webp',
   foes: foeArt,
+  daos: daoOrbArt,
 }, BOARD.ringSlots);
 
 let session = BattleSession.fromSavedProfile();
@@ -56,7 +74,6 @@ let playing = false;
 let shownDamage = 0;
 let peakQi = 100;
 
-/** HUD 展示模型。回合演出期间冻结为回合前的样子，按「出手 → 斩敌 → 战利品 → 新敌」的顺序再揭晓结果 */
 interface HudModel {
   realm: number;
   subStage: number;
@@ -71,7 +88,6 @@ interface HudModel {
   threshold: number;
 }
 let hudOverride: HudModel | null = null;
-/** 演出期间手牌区保持回合前的样子（战利品在斩敌后才揭晓） */
 let handFrozen = false;
 
 function liveHud(): HudModel {
@@ -161,22 +177,32 @@ function renderHand(): void {
   if (handFrozen) return;
   const hand = session.state.hand;
   if (!hand.length) {
-    handEl.innerHTML = '<div class="empty-hand">囊中已无道韵</div>';
+    handEl.innerHTML = '<div class="empty-hand">玉匣已空 · 暂无蕴藏道韵</div>';
     return;
   }
   const fueling = action.mode === 'FUEL_OVERWRITE' || action.mode === 'FUEL_REMOVE' || action.mode === 'FUEL_MOVE';
   const sorted = [...hand].sort((a, b) => a.category.localeCompare(b.category) || a.configId.localeCompare(b.configId) || b.level - a.level);
-  handEl.replaceChildren(...sorted.map((card) => {
+  handEl.replaceChildren(...sorted.map((card, idx) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.uid = card.uid;
     b.dataset.configId = card.configId;
-    b.className = `card cat-${card.category}`;
+    b.className = `card dao-orb cat-${card.category} tier-${Math.min(5, Math.max(1, card.level))}`;
+    b.style.setProperty('--bob-delay', `${(-idx * 0.45).toFixed(2)}s`);
     b.classList.toggle('sel', card.uid === selectedUid);
     b.classList.toggle('fuelable', fueling && !(action.mode === 'FUEL_OVERWRITE' && action.cardUid === card.uid));
     b.disabled = action.mode === 'MOVE_DEST' || (action.mode === 'FUEL_OVERWRITE' && action.cardUid === card.uid);
-    b.innerHTML = `<span class="cap"></span><span class="nm">${shortName(card)}</span><span class="lv">${ROMAN[card.level] ?? card.level}</span>`;
-    b.title = `${card.name} Lv${card.level}【${CATEGORY_LABEL[card.category]}】\n${card.description}`;
+    b.innerHTML = `
+      <span class="orb-ring" aria-hidden="true"></span>
+      <span class="orb-core">
+        <img class="orb-art" src="${orbArtPath(card.configId)}" alt="" draggable="false" />
+        <span class="orb-sheen" aria-hidden="true"></span>
+        <span class="orb-lv">${ROMAN[card.level] ?? card.level}</span>
+      </span>
+      <span class="orb-name">${shortName(card)}</span>
+    `;
+    b.title = `${card.name} ${ROMAN[card.level] ?? card.level}阶【${CATEGORY_LABEL[card.category]}】
+${card.description}`;
     b.setAttribute('aria-label', `${card.name} ${card.level}级：${card.description}`);
     b.onclick = () => onCard(card);
     b.onmouseenter = () => {
@@ -187,7 +213,7 @@ function renderHand(): void {
 }
 
 function cardHint(card: DaoRhyme): string {
-  return `<b style="color:${CATEGORY_HEX[card.category]}">${card.name} ${ROMAN[card.level] ?? ''}</b> ${card.description}`;
+  return `<b style="color:${CATEGORY_HEX[card.category]}">${card.name} ${ROMAN[card.level] ?? ''}</b> · ${card.description}`;
 }
 
 function renderSlots(): void {
@@ -208,7 +234,8 @@ function renderSlots(): void {
       b.style.height = `${SLOT_HIT.h}px`;
       const label = `${slotName(ref)}：${node ? `${node.name} ${node.level}级` : '空'}`;
       b.setAttribute('aria-label', label);
-      b.title = node ? `${label}\n${node.description}` : label;
+      b.title = node ? `${label}
+${node.description}` : label;
       b.onclick = (e) => {
         e.stopPropagation();
         onSlot(ref);
@@ -268,6 +295,7 @@ function afterPlacement(result: PlacementResult, ref: SlotRef, kind: 'place' | '
     sfx.whoosh();
   } else if (node) {
     scene.placeFx(ref, categoryOf(node.configId), kind === 'overwrite');
+    backdrop.pulse(0.28);
     sfx.place();
     sfx.chime(2);
   }
@@ -302,7 +330,7 @@ function onCard(card: DaoRhyme): void {
       selectedUid = selectedUid === card.uid ? null : card.uid;
       sfx.place();
       renderAll();
-      setHint(selectedUid ? `${cardHint(card)} → 点击阵眼落子（空眼耗 1 张；覆盖需再烧 1 张作燃料）` : '已放下所选道韵。');
+      setHint(selectedUid ? `${cardHint(card)} → 点选阵眼凝入道韵（空眼耗 1 枚；覆盖需再炼化 1 枚作引）` : '已收回所选道韵灵印。');
   }
 }
 
@@ -319,7 +347,7 @@ function onSlot(ref: SlotRef): void {
     }
     action = { mode: 'FUEL_MOVE', from: action.from, to: ref };
     renderAll();
-    setHint(`移到${slotName(ref)}：选 <b>1 张</b>手牌作燃料 · Esc 取消`);
+    setHint(`移到${slotName(ref)}：点选 <b>1 枚</b>道韵灵印作炼化引火 · Esc 取消`);
     return;
   }
   if (action.mode !== 'IDLE') {
@@ -332,16 +360,16 @@ function onSlot(ref: SlotRef): void {
       return;
     }
     if (st.hand.length < 2) {
-      setHint('<span class="warn">覆盖需要待放入的道韵和另一张燃料牌。</span>');
+      setHint('<span class="warn">覆盖需要待凝入的道韵和另一枚炼化引火。</span>');
       return;
     }
     action = { mode: 'FUEL_OVERWRITE', target: ref, cardUid: selectedUid };
     renderAll();
-    setHint(`覆盖【${node.name}】：再选 <b>1 张</b>手牌作燃料（旧道韵与燃料都会销毁）· 再点阵眼或 Esc 取消`);
+    setHint(`覆盖【${node.name}】：再选 <b>1 枚</b>道韵作炼化引火（旧道韵与引火皆散）· 再点阵眼或 Esc 取消`);
     return;
   }
   if (node) openMenu(ref, node);
-  else setHint('先在下方选一张道韵，再点这个阵眼。');
+  else setHint('先从下方玉匣点选一枚道韵灵印，再凝入此阵眼。');
 }
 
 function openMenu(ref: SlotRef, node: DaoRhyme): void {
@@ -360,13 +388,13 @@ function openMenu(ref: SlotRef, node: DaoRhyme): void {
     };
     menuEl.append(b);
   };
-  add('拆除（烧 1 张）', () => {
+  add('散去（炼化 1 枚）', () => {
     closeMenu();
     action = { mode: 'FUEL_REMOVE', target: ref };
     renderAll();
-    setHint(`拆除【${node.name}】：选 <b>1 张</b>手牌作燃料 · Esc 取消`);
+    setHint(`散去【${node.name}】：点选 <b>1 枚</b>道韵作炼化引火 · Esc 取消`);
   }, noFuel);
-  add('移位（烧 1 张）', () => {
+  add('移位（炼化 1 枚）', () => {
     closeMenu();
     action = { mode: 'MOVE_DEST', from: ref };
     renderAll();
@@ -374,7 +402,7 @@ function openMenu(ref: SlotRef, node: DaoRhyme): void {
   }, noFuel || !hasEmpty);
   add('取消', closeMenu);
   menuEl.hidden = false;
-  menuEl.style.left = `${Math.min(STAGE_W - 330, Math.max(10, p.x - 150))}px`;
+  menuEl.style.left = `${Math.min(STAGE_W - 340, Math.max(10, p.x - 150))}px`;
   menuEl.style.top = `${p.y + 22}px`;
   menuEl.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
 }
@@ -428,12 +456,12 @@ function chooseRelic(choices: RelicConfig[]): Promise<void> {
 
 function showLoot(loot: DaoRhyme[], doubled: boolean): Promise<void> {
   return new Promise((resolve) => {
-    const cards = loot.map((card) => `<div class="loot cat-${card.category}" title="${card.description}">
-      <div class="g" style="color:${CATEGORY_HEX[card.category]}">${glyphOf(card)}</div>
-      <div class="n">${card.name} ${ROMAN[card.level] ?? ''}</div></div>`).join('');
+    const orbs = loot.map((card) => `<div class="loot cat-${card.category} tier-${Math.min(5, Math.max(1, card.level))}" title="${card.description}">
+      <div class="loot-orb"><img src="${orbArtPath(card.configId)}" alt="" /></div>
+      <div class="n" style="color:${CATEGORY_HEX[card.category]}">${card.name} ${ROMAN[card.level] ?? ''}</div></div>`).join('');
     const m = openModal(`<div class="ptitle">斩敌所得</div>
-      <div class="psub">${loot.length ? `${loot.length} 枚道韵收入囊中${doubled ? '（九霄神雷劫 · 战利品翻倍）' : ''}` : '此战未得道韵'}</div>
-      <div class="loots">${cards}</div>
+      <div class="psub">${loot.length ? `${loot.length} 枚道韵灵印凝入玉匣${doubled ? '（九霄神雷劫 · 战利品翻倍）' : ''}` : '此战未得道韵'}</div>
+      <div class="loots">${orbs}</div>
       <button type="button" class="bigbtn" id="loot-ok">继续斗法</button>`);
     const ok = m.querySelector<HTMLButtonElement>('#loot-ok')!;
     ok.onclick = () => {
@@ -470,7 +498,6 @@ function endModal(victory: boolean): void {
   again.focus();
 }
 
-/** 局外天赋：消耗功德永久提升，下一局开局生效 */
 function talentModal(onClose: () => void = closeModal): void {
   const profile = loadKarmaProfile();
   const rows = talentRows(profile).map((t) => {
@@ -507,14 +534,14 @@ function bookModal(): void {
       return card ? `<div class="row"><b style="color:${CATEGORY_HEX[card.category]}">${card.name}</b><span>${card.description}</span></div>` : '';
     }).join('');
   const m = openModal(`<div class="ptitle" style="font-size:44px">斗法规则</div><div class="book">
-    <h4>一场斗法</h4>每次点<b>周天</b>先扣真气（第 n 次耗气 = 本关基数 × n^1.6，天劫可改写）。一股能量从<b>第一眼 · 入气</b>出发顺时针流转，
-    沿途被道韵改变气势，走满一圈会自动升入外环；遇<b>释放</b>道韵出手：产气 = 基础气 × 倍率 × 释放系数。
-    单次产气 ≥ 敌人<b>护体魔光</b>即斩敌晋升，获得道韵战利品；否则敌人反击。真气付不起下一次运转即<b>身死道消</b>。
+    <h4>一场斗法</h4>每次点<b>周天</b>先扣真气（第 n 次耗气 = 本关基数 × n^1.6，天劫可改写）。一股灵气从<b>第一眼 · 入气</b>出发顺时针流转，
+    沿途被道韵灵印改变气势，走满一圈会自动升入外环；遇<b>释放</b>道韵出手：产气 = 基础气 × 倍率 × 释放系数。
+    单次产气 ≥ 敌人<b>护体魔光</b>即斩敌晋升，获得道韵灵印战利品；否则敌人反击。真气付不起下一次运转即<b>身死道消</b>。
     <h4>境界与外环</h4>炼气 → 筑基 → 金丹 → 元婴 → 化神，每个大境界 3 战。大境界突破解锁新的一环，并可让一件灵宝认主。每个巅峰之战会降下天劫。
-    <h4>布阵代价</h4>空眼落子耗 1 张；覆盖已有道韵需再烧 1 张作燃料；拆除、移位也要烧 1 张。
-    <h4>炼化</h4>3 张同名同级道韵可三合一升一级；2 张同名同级加 1 张任意牌作催化剂也可精炼。
+    <h4>布阵代价</h4>空眼凝入耗 1 枚；覆盖已有道韵需再炼化 1 枚作引；散去、移位也要炼化 1 枚。
+    <h4>炼化</h4>3 枚同名同阶道韵可三合一升阶；2 枚同名同阶加 1 枚任意道韵作引也可催化精炼。
     <h4>连携</h4>增幅接增幅：倍率 +0.3；传导接传导：步数 +1；增幅直入释放：释放系数 +0.2；同一环全是同类道韵时触发共鸣 ×1.25。
-    ${daoRows ? `<h4>囊中道韵</h4>${daoRows}` : ''}
+    ${daoRows ? `<h4>玉匣所蕴道韵</h4>${daoRows}` : ''}
     </div><button type="button" class="bigbtn" id="book-close">合上</button>`);
   const close = m.querySelector<HTMLButtonElement>('#book-close')!;
   close.onclick = closeModal;
@@ -524,20 +551,21 @@ function bookModal(): void {
 function fuseModal(): void {
   const options = session.fusionOptions();
   if (!options.length) return;
-  const m = openModal(`<div class="ptitle" style="font-size:44px">炼 化</div><div class="psub">同名同级三合一；两张时再烧一张最低级的牌作催化剂</div><div class="fuse-list"></div>
+  const m = openModal(`<div class="ptitle" style="font-size:44px">炼 化</div><div class="psub">同名同阶三合一；两枚时再炼化一枚最低阶道韵作引火</div><div class="fuse-list"></div>
     <button type="button" class="linkbtn" id="fuse-close">收起丹炉</button>`);
   const list = m.querySelector('.fuse-list')!;
   options.forEach((opt) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'fuse-row';
-    const cost = opt.mode === 'fuse' ? `3 × ${opt.name} ${ROMAN[opt.level]}` : `2 × ${opt.name} ${ROMAN[opt.level]} + 催化剂 ${opt.catalyst?.name ?? ''} ${ROMAN[opt.catalyst?.level ?? 0] ?? ''}`;
+    const cost = opt.mode === 'fuse' ? `3 × ${opt.name} ${ROMAN[opt.level]}` : `2 × ${opt.name} ${ROMAN[opt.level]} + 引火 ${opt.catalyst?.name ?? ''} ${ROMAN[opt.catalyst?.level ?? 0] ?? ''}`;
     b.innerHTML = `<span class="mode">${opt.mode === 'fuse' ? '三合一' : '催化精炼'}</span><span>${cost}</span><span class="arrow">→</span><b>${opt.name} ${ROMAN[opt.level + 1]}</b>`;
     b.onclick = () => {
       const out = session.applyFusion(opt);
       closeModal();
       if (out.success) {
         sfx.win();
+        backdrop.pulse(0.6);
         scene.splash('炼', { x: 800, y: 600, size: 150, dur: 1.2, tone: 'teal' });
       }
       toast(out.message, 3200);
@@ -553,6 +581,14 @@ function fuseModal(): void {
 
 const pause = (s: number): Promise<void> => new Promise((r) => setTimeout(r, s * 1000));
 
+function resetCalculator(threshold: number): void {
+  calcBaseEl.textContent = String(BOARD.initialBaseQi);
+  calcMultEl.textContent = BOARD.initialMultiplier.toFixed(1);
+  calcTotalEl.textContent = `产气 0 / ${formatQi(threshold)}`;
+  tallyEl.classList.remove('burning');
+  tallyEl.classList.add('on');
+}
+
 async function playTurn(turn: BattleTurn): Promise<void> {
   const { result, timeline, stage } = turn;
   if (result.isGameOver) {
@@ -563,29 +599,57 @@ async function playTurn(turn: BattleTurn): Promise<void> {
   if (turn.rebirthTriggered) toast('<b>天道生机</b> · 逆天改命，免死一次并注入 30 真气', 3600);
   const hand = scene.heroHand();
   if (result.charged > 0) scene.floatText(hand.x - 40, hand.y - 30, `−${formatQi(result.charged)} 真气`, '#9fffe8', 26, 1.4);
-  tallyEl.textContent = '周天运转';
-  tallyEl.classList.add('on');
+
+  resetCalculator(stage.threshold);
   shownDamage = 0;
   btnSkip.hidden = false;
+  backdrop.setEnergy(0.75);
+
   await scene.play(timeline, {
     threshold: stage.threshold,
+    onEnergy: (lvl) => {
+      if (lvl > 0.8) backdrop.pulse(0.35);
+      else backdrop.setEnergy(lvl);
+    },
+    onBeat: (beat, power) => {
+      const nextBase = formatQi(power.baseQi);
+      const nextMult = power.multiplier.toFixed(power.multiplier % 1 === 0 ? 1 : 2);
+      if (calcBaseEl.textContent !== nextBase) {
+        calcBaseEl.textContent = nextBase;
+        popBounce(calcBaseEl.parentElement);
+      }
+      if (calcMultEl.textContent !== nextMult || beat.kind === 'crit' || beat.kind === 'synergy') {
+        calcMultEl.textContent = nextMult;
+        popBounce(calcMultEl.parentElement);
+      }
+      if (beat.kind === 'release') {
+        popBounce(calcTotalEl);
+      }
+    },
     onHit: (total) => {
       shownDamage = total;
-      tallyEl.textContent = `产气 ${formatQi(total)} / ${formatQi(stage.threshold)}`;
+      calcTotalEl.textContent = `产气 ${formatQi(total)} / ${formatQi(stage.threshold)}`;
+      popBounce(calcTotalEl);
+      if (total >= stage.threshold) tallyEl.classList.add('burning');
       $('foe-fill').style.width = `${Math.max(0, (1 - total / Math.max(1, stage.threshold)) * 100)}%`;
     },
   });
+
+  backdrop.setEnergy(0.08);
   btnSkip.hidden = true;
-  setTimeout(() => tallyEl.classList.remove('on'), 900);
+  setTimeout(() => {
+    tallyEl.classList.remove('on');
+    tallyEl.classList.remove('burning');
+  }, 1050);
+
   const gain = result.simulation.turnQiGenerated;
-  // 产气浮字放在掌心上方，避开起手时的扣费浮字
   if (gain > 0) scene.floatText(hand.x + 70, hand.y - 110, `+${formatQi(gain)} 真气`, '#9fffe8', 30, 1.6);
-  // 揭晓本回合真气结算（关卡信息仍保持本场敌人，斩敌后再切换）
   if (hudOverride) hudOverride.qi = session.state.currentQi;
   renderHud();
 
   if (result.cleared) {
     setHint(`破障斩敌！单次产气 <b>${formatQi(gain)}</b> ≥ 护体魔光 ${formatQi(stage.threshold)}`);
+    backdrop.pulse(0.9);
     await scene.foeDefeated();
     if (result.isVictory) {
       await scene.ascension();
@@ -594,32 +658,34 @@ async function playTurn(turn: BattleTurn): Promise<void> {
     }
     if (result.newRealmUnlocked) {
       renderSlots();
-      // 突破时天地变换：背景随新境界淡入
       scene.setBackground(session.state.realm);
+      backdrop.setTheme(session.state.realm, session.state.activeTribulation?.id ?? null);
       await scene.breakthrough(session.state.realm - 1, REALM_NAMES[session.state.realm - 1] ?? '');
-      toast(`阵盘第 ${session.state.realm} 环已解锁 · 能量走满内环一周会自动升环`, 3400);
+      toast(`阵盘第 ${session.state.realm} 环已解锁 · 灵气走满内环一周会自动升环`, 3400);
     }
     if (session.pendingRelics.length) await chooseRelic(session.pendingRelics);
     await showLoot(result.lootAwarded, result.context.activeTribulation?.modifiers.doubleLoot ?? false);
-    // 战利品已揭晓：解冻手牌与 HUD，进入下一场
     handFrozen = false;
     hudOverride = null;
     shownDamage = 0;
     const trib = result.tribulationEncountered;
     if (trib) {
+      backdrop.setTheme(session.state.realm, trib.id);
       scene.tribulationOmen(trib.id, trib.name);
       toast(`<b>${trib.name}</b> · ${trib.description}`, 5200);
+    } else {
+      backdrop.setTheme(session.state.realm, null);
     }
     scene.enemyEnter(session.foe);
     renderAll();
-    setHint(`新敌现身：<b>${session.foe.name}</b> · 护体魔光 ${formatQi(session.state.stageThreshold)}。布阵，再运周天。`);
+    setHint(`新敌现身：<b>${session.foe.name}</b> · 护体魔光 ${formatQi(session.state.stageThreshold)}。凝韵布阵，再运周天。`);
     return;
   }
 
   sfx.fail();
   toast(timeline.releaseCount > 0
     ? `护体魔光未破 · 本次产气 <b>${formatQi(gain)}</b> / 需单次 ≥ ${formatQi(stage.threshold)}`
-    : '本次周天未能出手 · 阵中需要能量走得到的<b>释放</b>道韵（灵爆术 / 万剑诀）', 3400);
+    : '本次周天未能出手 · 阵中需要灵气走得到的<b>释放</b>道韵（灵爆术 / 万剑诀）', 3400);
   await pause(0.5);
   scene.counterAttack();
   shownDamage = 0;
@@ -652,7 +718,7 @@ async function onRun(): Promise<void> {
   handFrozen = true;
   playing = true;
   renderAll();
-  setHint('周天运转中…… 看能量如何流经每一枚阵眼');
+  setHint('周天运转中…… 观灵气沿道韵灵印流转倍增');
   try {
     await playTurn(turn);
   } finally {
@@ -660,6 +726,7 @@ async function onRun(): Promise<void> {
     handFrozen = false;
     hudOverride = null;
     btnSkip.hidden = true;
+    backdrop.setEnergy(0);
     renderAll();
   }
 }
@@ -676,9 +743,11 @@ function newGame(): void {
   btnSkip.hidden = true;
   shownDamage = 0;
   peakQi = 100;
+  backdrop.setTheme(session.state.realm, null);
+  backdrop.setEnergy(0);
   renderAll();
   scene.enemyEnter(session.foe);
-  setHint('点选下方一张<b>道韵</b>，再点阵眼落子。能量从<b>第一眼 · 入气</b>出发顺时针流转，遇<b>释放</b>道韵化为攻势。');
+  setHint('点选下方玉匣中的<b>道韵灵印</b>，再点阵眼凝入。灵气从<b>第一眼 · 入气</b>出发顺时针流转，遇<b>释放</b>道韵化为攻势。');
 }
 
 // ------------------------------------------------------------ 事件
@@ -711,7 +780,7 @@ stageEl.addEventListener('click', (e) => {
   if (e.target === canvas && action.mode === 'IDLE' && selectedUid) {
     selectedUid = null;
     renderAll();
-    setHint('已放下所选道韵。');
+    setHint('已收回所选道韵灵印。');
   }
 });
 document.addEventListener('keydown', (e) => {
